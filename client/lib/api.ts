@@ -49,18 +49,11 @@ export interface StreamHandlers {
   onError?: (message: string) => void;
 }
 
-export async function streamTask(kind: TaskKind, input: Record<string, unknown>, handlers: StreamHandlers, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`${BASE}/api/agent/run`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind, input }),
-    signal,
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
-    throw new ApiError(response.status, body);
-  }
+/** 逐帧读取 SSE：`event:` 与 `data:` 各一行，帧之间以空行分隔。坏帧直接跳过。 */
+async function readFrames(
+  response: Response,
+  onFrame: (event: string, payload: Record<string, unknown>) => void,
+): Promise<void> {
   if (!response.body) throw new Error('浏览器不支持流式响应');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -76,14 +69,64 @@ export async function streamTask(kind: TaskKind, input: Record<string, unknown>,
       const event = lines.find((line) => line.startsWith('event:'))?.slice(6).trim() ?? 'message';
       const raw = lines.find((line) => line.startsWith('data:'))?.slice(5).trim();
       if (!raw) continue;
-      let payload: Record<string, unknown>;
-      try { payload = JSON.parse(raw) as Record<string, unknown>; } catch { continue; }
-      if (event === 'meta') handlers.onMeta?.(payload as unknown as { mode: string; model: string; label: string });
-      else if (event === 'delta') handlers.onDelta(String(payload.text ?? ''));
-      else if (event === 'done') handlers.onDone?.();
-      else if (event === 'error') handlers.onError?.(String(payload.detail ?? '生成失败'));
+      try {
+        onFrame(event, JSON.parse(raw) as Record<string, unknown>);
+      } catch { /* 坏帧跳过 */ }
     }
   }
+}
+
+export async function streamTask(kind: TaskKind, input: Record<string, unknown>, handlers: StreamHandlers, signal?: AbortSignal): Promise<void> {
+  const response = await fetch(`${BASE}/api/agent/run`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, input }),
+    signal,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+    throw new ApiError(response.status, body);
+  }
+  await readFrames(response, (event, payload) => {
+    if (event === 'meta') handlers.onMeta?.(payload as unknown as { mode: string; model: string; label: string });
+    else if (event === 'delta') handlers.onDelta(String(payload.text ?? ''));
+    else if (event === 'done') handlers.onDone?.();
+    else if (event === 'error') handlers.onError?.(String(payload.detail ?? '生成失败'));
+  });
+}
+
+/** `platform` 的会话流：event 名就是步骤类型，data 是整条事件对象。 */
+export interface PlatformChatEvent {
+  type: 'meta' | 'step' | 'delta' | 'done' | 'error';
+  text?: string;
+  tool?: string;
+  status?: 'start' | 'done';
+  detail?: string;
+  runId?: string;
+  conversationId?: string;
+}
+
+export async function streamPlatformChat(
+  message: string,
+  conversationId: string | undefined,
+  onEvent: (event: PlatformChatEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`${BASE}/api/platform/chat`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, conversationId }),
+    signal,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+    throw new ApiError(response.status, body);
+  }
+  await readFrames(response, (event, payload) => {
+    onEvent({ ...(payload as unknown as PlatformChatEvent), type: event as PlatformChatEvent['type'] });
+  });
 }
 
 export async function downloadFile(path: string, fallback: string): Promise<void> {

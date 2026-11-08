@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import { AppError } from './errors.ts';
+import { AppError, type FieldError } from './errors.ts';
 import { logger, runWithRequestId } from './logger.ts';
 
 export interface AuthenticatedRequest extends Request {
@@ -35,27 +35,62 @@ export function asyncHandler<T extends Request>(
   };
 }
 
+export interface PageQuery { limit: number; offset: number }
+
+/** 列表接口统一的分页参数：`?limit=&offset=`，夹在 1..maxLimit 与 >=0。 */
+export function pageQuery(req: Request, defaultLimit = 20, maxLimit = 100): PageQuery {
+  const rawLimit = Number.parseInt(String(req.query.limit ?? ''), 10);
+  const rawOffset = Number.parseInt(String(req.query.offset ?? ''), 10);
+  return {
+    limit: Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), maxLimit) : defaultLimit,
+    offset: Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0,
+  };
+}
+
+export interface Paged<T> { items: T[]; total: number; limit: number; offset: number }
+
+/** 错误信封的唯一出口：`{title, status, detail, errors?, request_id}`。404 与 429 也走它，信封形状才不会分叉。 */
+export function sendError(
+  res: Response,
+  status: number,
+  title: string,
+  detail: string,
+  errors?: FieldError[],
+): void {
+  res.status(status).json({
+    title,
+    status,
+    detail,
+    ...(errors ? { errors } : {}),
+    request_id: res.getHeader('x-request-id'),
+  });
+}
+
+/** `express.json` 抛的是 http-errors（带 status/type）；4xx 映射成 AppError，否则会落到 500 分支。 */
+function asClientError(err: unknown): AppError | null {
+  const candidate = err as { status?: number; statusCode?: number; type?: string };
+  const status = candidate?.status ?? candidate?.statusCode;
+  if (typeof status !== 'number' || status < 400 || status >= 500) return null;
+  if (status === 413 || candidate.type === 'entity.too.large') {
+    return new AppError('请求体超过 12MB 上限', 'PAYLOAD_TOO_LARGE', 413);
+  }
+  if (candidate.type === 'entity.parse.failed') {
+    return new AppError('请求体不是合法的 JSON', 'BAD_REQUEST', 400);
+  }
+  return new AppError('请求格式不正确', 'BAD_REQUEST', status);
+}
+
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction): void {
-  if (err instanceof AppError && err.isOperational) {
-    logger.warn('request.failed', { code: err.code, status: err.status, path: req.path });
-    res.status(err.status).json({
-      title: err.code,
-      status: err.status,
-      detail: err.message,
-      errors: err.details,
-      request_id: res.getHeader('x-request-id'),
-    });
+  const appError = err instanceof AppError ? err : asClientError(err);
+  if (appError && appError.isOperational) {
+    logger.warn('request.failed', { code: appError.code, status: appError.status, path: req.path });
+    sendError(res, appError.status, appError.code, appError.message, appError.details);
     return;
   }
   const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error ? err.stack : undefined;
   logger.error('unexpected.error', { error: message, stack, path: req.path });
-  res.status(500).json({
-    title: 'INTERNAL_ERROR',
-    status: 500,
-    detail: '服务内部错误，请稍后重试',
-    request_id: res.getHeader('x-request-id'),
-  });
+  sendError(res, 500, 'INTERNAL_ERROR', '服务内部错误，请稍后重试');
 }
 
 const buckets = new Map<string, { count: number; resetAt: number }>();
@@ -72,7 +107,7 @@ export function rateLimit(limit: number, windowMs: number): RequestHandler {
     }
     bucket.count += 1;
     if (bucket.count > limit) {
-      res.status(429).json({ title: 'RATE_LIMITED', status: 429, detail: '请求过于频繁，请稍后再试' });
+      sendError(res, 429, 'RATE_LIMITED', '请求过于频繁，请稍后再试');
       return;
     }
     next();

@@ -58,6 +58,7 @@ export const researchService = {
   updateProject(userId: string, id: string, input: { name?: string; description?: string; objective?: string; status?: string }) {
     if (!researchRepository.project(userId, id)) throw new NotFoundError('研究项目', id);
     researchRepository.updateProject(userId, id, input);
+    activityService.record(userId, 'research', 'update', `更新研究项目 ${id}`);
     return this.overview(userId).projects.find((project) => project.id === id);
   },
   deleteProject(userId: string, id: string): void {
@@ -84,6 +85,9 @@ export const researchService = {
     conclusion: string; status: string; metrics: Array<{ name: string; value: number }>;
   }>) {
     if (!researchRepository.experiment(userId, id)) throw new NotFoundError('实验', id);
+    if (input.projectId && !researchRepository.project(userId, input.projectId)) {
+      throw new NotFoundError('研究项目', input.projectId);
+    }
     researchRepository.updateExperiment(userId, id, {
       title: input.title, project_id: input.projectId, hypothesis: input.hypothesis,
       method: input.method, result: input.result, conclusion: input.conclusion, status: input.status,
@@ -95,9 +99,14 @@ export const researchService = {
   deleteExperiment(userId: string, id: string): void {
     if (!researchRepository.experiment(userId, id)) throw new NotFoundError('实验', id);
     researchRepository.deleteExperiment(userId, id);
+    activityService.record(userId, 'research', 'delete', `删除实验 ${id}`);
   },
 
   createTask(userId: string, input: { title: string; projectId?: string | null; status?: string; priority?: string; dueDate?: string | null }) {
+    // 不校验会在外键上撞成 500；先查一次，与 createExperiment 的 404 口径保持一致。
+    if (input.projectId && !researchRepository.project(userId, input.projectId)) {
+      throw new NotFoundError('研究项目', input.projectId);
+    }
     const id = researchRepository.createTask(userId, {
       title: input.title, projectId: input.projectId ?? null, status: input.status ?? 'todo',
       priority: input.priority ?? 'medium', dueDate: input.dueDate ?? null,
@@ -109,10 +118,12 @@ export const researchService = {
     researchRepository.updateTask(userId, id, {
       title: input.title, status: input.status, priority: input.priority, due_date: input.dueDate,
     });
+    activityService.record(userId, 'research', 'update', `更新任务 ${id}`);
     return this.overview(userId).tasks.find((task) => task.id === id);
   },
   deleteTask(userId: string, id: string): void {
     researchRepository.deleteTask(userId, id);
+    activityService.record(userId, 'research', 'delete', `删除任务 ${id}`);
   },
 
   async ai(userId: string, experimentId: string, action: 'design' | 'interpret') {

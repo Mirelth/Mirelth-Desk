@@ -25,6 +25,7 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
 }
 
 interface Envelope<T> { data: T }
+interface Paged<T> { items: T[]; total: number; limit: number; offset: number }
 
 async function main(): Promise<void> {
   console.log(`Smoke test → ${BASE}\n`);
@@ -49,8 +50,8 @@ async function main(): Promise<void> {
   const dashboard = await request<Envelope<{ documents: number; recent: unknown[] }>>('/api/dashboard');
   check(dashboard.status === 200 && Array.isArray(dashboard.data?.data.recent), 'GET /api/dashboard');
 
-  const documents = await request<Envelope<Array<{ id: string }>>>('/api/documents');
-  check(documents.status === 200 && Array.isArray(documents.data?.data), 'GET /api/documents');
+  const documents = await request<Envelope<Paged<{ id: string }>>>('/api/documents');
+  check(documents.status === 200 && Array.isArray(documents.data?.data.items), 'GET /api/documents');
 
   const created = await request<Envelope<{ id: string; title: string }>>('/api/documents', {
     method: 'POST', body: { title: '冒烟测试文档', template: 'weekly', content: '# 测试\n\n这是冒烟测试。' },
@@ -127,9 +128,9 @@ async function main(): Promise<void> {
 
   const mailStatus = await request<Envelope<{ configured: boolean }>>('/api/mail/status');
   check(mailStatus.status === 200, 'GET /api/mail/status');
-  const mailList = await request<Envelope<Array<{ id: string }>>>('/api/mail/messages?folder=inbox');
-  const firstMail = mailList.data?.data[0]?.id ?? '';
-  check(mailList.status === 200 && Array.isArray(mailList.data?.data), 'GET /api/mail/messages');
+  const mailList = await request<Envelope<Paged<{ id: string }>>>('/api/mail/messages?folder=inbox');
+  const firstMail = mailList.data?.data.items[0]?.id ?? '';
+  check(mailList.status === 200 && Array.isArray(mailList.data?.data.items), 'GET /api/mail/messages');
   if (firstMail) {
     const reply = await request<Envelope<{ text: string }>>('/api/mail/ai', {
       method: 'POST', body: { action: 'reply', messageId: firstMail, tone: '专业礼貌' },

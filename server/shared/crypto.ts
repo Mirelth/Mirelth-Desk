@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { config } from './config.ts';
-import { UnauthorizedError } from './errors.ts';
+import { AppError, UnauthorizedError } from './errors.ts';
 
 const key = crypto.createHash('sha256').update(config.secret).digest();
 
@@ -58,11 +58,20 @@ export function encryptSecret(plain: string): string {
 }
 
 export function decryptSecret(payload: string): string {
-  const [ivPart, tagPart, dataPart] = payload.split('.');
-  if (!ivPart || !tagPart || !dataPart) throw new Error('Invalid encrypted secret');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivPart, 'base64url'));
-  decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
-  return Buffer.concat([decipher.update(Buffer.from(dataPart, 'base64url')), decipher.final()]).toString('utf8');
+  // 整个函数体都会抛（分段不齐 / IV 非法 / tag 非法 / GCM 校验失败），统一包成 AppError。
+  try {
+    const [ivPart, tagPart, dataPart] = payload.split('.');
+    if (!ivPart || !tagPart || !dataPart) throw new Error('encrypted secret is not well-formed');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivPart, 'base64url'));
+    decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(dataPart, 'base64url')), decipher.final()]).toString('utf8');
+  } catch {
+    throw new AppError(
+      '已保存的凭据无法解密（APP_SECRET 可能已更换），请重新填写密码或 Token',
+      'CREDENTIAL_DECRYPT_FAILED',
+      500,
+    );
+  }
 }
 
 export function newId(prefix: string): string {

@@ -12,6 +12,7 @@ import { Research } from './pages/Research.tsx';
 import { Mail } from './pages/Mail.tsx';
 import { Automation } from './pages/Automation.tsx';
 import { Connectors } from './pages/Connectors.tsx';
+import { Platform } from './pages/Platform.tsx';
 import { Settings } from './pages/Settings.tsx';
 
 const PAGE_META: Record<PageId, { title: string; sub: string }> = {
@@ -23,13 +24,30 @@ const PAGE_META: Record<PageId, { title: string; sub: string }> = {
   mail: { title: '智能邮箱', sub: '收发、摘要与回复起草' },
   automation: { title: '自动化任务', sub: '定时触发办公动作，结果可追溯' },
   connectors: { title: '技能专家连接器', sub: '模型、邮箱、存储与外部服务接入状态' },
+  platform: { title: '智能体工作台', sub: '多轮会话、工具调用与知识库检索' },
   settings: { title: '设置', sub: 'AI 模型、邮箱账户与本机账号' },
 };
 
+/**
+ * 活动流水 → 页面。`module` 只有 7 个值而 `action` 是自由字符串，所以先看 action 再看 module：
+ * 绝大多数写操作记的是 `module='agent'`（含自动化、连接器、各类 *_ai），只按 module 映射会把它们全导到首页。
+ */
 const MODULE_PAGE: Record<string, PageId> = {
   document: 'documents', documents: 'documents', analytics: 'analytics', paper: 'papers',
-  research: 'research', mail: 'mail', agent: 'dashboard', system: 'dashboard',
+  research: 'research', mail: 'mail', system: 'dashboard',
 };
+
+function pageForActivity(entry: { module: string; action: string }): PageId {
+  const action = entry.action;
+  if (action.startsWith('automation_') || action.startsWith('connector_')) return 'automation';
+  if (action === 'document_ai') return 'documents';
+  if (action === 'analytics_ai') return 'analytics';
+  if (action === 'paper_ai') return 'papers';
+  if (action === 'research_ai') return 'research';
+  if (action === 'mail_ai') return 'mail';
+  if (action === 'stream' || action === 'generate' || action === 'chat') return 'platform';
+  return MODULE_PAGE[entry.module] ?? 'dashboard';
+}
 
 const NAV: Array<{ id: PageId; label: string; icon: IconName; hint: string }> = [
   { id: 'mail', label: '智能邮箱', icon: 'mail', hint: '收发与 AI 回复' },
@@ -134,7 +152,7 @@ export function App() {
           <div className="sidebar-tasks">
             {(stats?.recent ?? []).slice(0, 3).map((item) => (
               <button type="button" className="sidebar-task" key={item.id} title={item.description}
-                onClick={() => navigate(MODULE_PAGE[item.module] ?? 'dashboard')}>
+                onClick={() => navigate(pageForActivity(item))}>
                 <span className="dot" /><span>{item.description}</span>
               </button>
             ))}
@@ -185,7 +203,8 @@ export function App() {
             {page === 'mail' && <Mail onChanged={refreshStats} />}
             {page === 'automation' && <Automation onChanged={refreshStats} />}
             {page === 'connectors' && <Connectors onChanged={refreshStats} />}
-            {page === 'settings' && <Settings user={user} aiMode={aiMode} onLogout={() => void logout()} />}
+            {page === 'platform' && <Platform onChanged={refreshStats} />}
+            {page === 'settings' && <Settings user={user} aiMode={aiMode} onLogout={() => void logout()} onChanged={refreshStats} />}
           </main>
         </div>
       </div>

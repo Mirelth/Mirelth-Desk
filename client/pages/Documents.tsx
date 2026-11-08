@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient, downloadFile, getErrorMessage, streamTask } from '../lib/api.ts';
-import { useLoad, useStream } from '../lib/hooks.ts';
+import { useLoad, usePaged, useStream } from '../lib/hooks.ts';
 import type { DocumentDto, DocumentTemplate, TaskKind } from '../lib/types.ts';
 import {
   AiOutput, Badge, Button, EmptyState, ErrorBanner, Field, Icon, IconButton, MarkdownView, Modal, Segmented,
@@ -17,7 +17,8 @@ const AI_ACTIONS: Array<{ action: string; label: string; kind: TaskKind; icon: '
 
 export function Documents({ onChanged }: { onChanged?: () => void }) {
   const toast = useToast();
-  const docs = useLoad<DocumentDto[]>(() => apiClient.get<DocumentDto[]>('/api/documents'));
+  const [search, setSearch] = useState('');
+  const docs = usePaged<DocumentDto>(`/api/documents${search ? `?q=${encodeURIComponent(search)}` : ''}`, 20);
   const templates = useLoad<DocumentTemplate[]>(() => apiClient.get<DocumentTemplate[]>('/api/documents/templates'));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<DocumentDto | null>(null);
@@ -32,14 +33,14 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
   const stream = useStream();
 
   useEffect(() => {
-    if (!docs.data?.length) return;
-    if (!selectedId || !docs.data.some((doc) => doc.id === selectedId)) setSelectedId(docs.data[0].id);
-  }, [docs.data, selectedId]);
+    if (!docs.items?.length) return;
+    if (!selectedId || !docs.items.some((doc) => doc.id === selectedId)) setSelectedId(docs.items[0].id);
+  }, [docs.items, selectedId]);
 
   useEffect(() => {
-    const current = docs.data?.find((doc) => doc.id === selectedId);
+    const current = docs.items?.find((doc) => doc.id === selectedId);
     if (current) setDraft({ ...current });
-  }, [selectedId, docs.data]);
+  }, [selectedId, docs.items]);
 
   const runAi = async (kind: TaskKind, label: string) => {
     if (!draft || stream.running) return;
@@ -60,11 +61,12 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
         onDelta: (chunk) => { full += chunk; stream.setText(full); },
         onMeta: (meta) => stream.setLabel(meta.label),
         onError: (message) => stream.setError(message),
-      });
+      }, stream.signal);
     } catch (error) {
       stream.setError(getErrorMessage(error));
     } finally {
       stream.setRunning(false);
+      onChanged?.();
     }
   };
 
@@ -144,15 +146,12 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
         <div className="card list-pane">
           <div className="list-search">
             <div className="search-box"><Icon name="search" size={15} />
-              <input placeholder="搜索文档…" onChange={(event) => {
-                const q = event.target.value;
-                void apiClient.get<DocumentDto[]>(`/api/documents?q=${encodeURIComponent(q)}`).then(docs.setData).catch(() => undefined);
-              }} />
+              <input placeholder="搜索文档…" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
           </div>
           <div className="list-scroll">
-            {docs.loading && !docs.data ? <div style={{ padding: 12 }}><Skeleton height={70} /><Skeleton height={70} /></div> : null}
-            {docs.data?.length ? docs.data.map((doc) => (
+            {docs.loading && !docs.items.length ? <div style={{ padding: 12 }}><Skeleton height={70} /><Skeleton height={70} /></div> : null}
+            {docs.items?.length ? docs.items.map((doc) => (
               <button type="button" key={doc.id} className={`list-item ${selectedId === doc.id ? 'active' : ''}`}
                 onClick={() => { setSelectedId(doc.id); stream.reset(); }}>
                 <div className="list-title">{doc.title}</div>
@@ -160,6 +159,11 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
                 <div className="list-meta"><span>{formatDate(doc.updatedAt)}</span><span>{doc.wordCount} 字</span><Badge tone={doc.status === 'final' ? 'green' : 'neutral'}>{doc.status === 'final' ? '定稿' : '草稿'}</Badge></div>
               </button>
             )) : !docs.loading && <EmptyState icon="file" title="还没有文档" hint="点击右上角新建，从模板开始写作。" />}
+            {docs.hasMore && (
+              <div style={{ padding: 8 }}>
+                <Button variant="ghost" size="sm" loading={docs.loading} onClick={() => void docs.loadMore()}>加载更多（{docs.items.length}/{docs.total}）</Button>
+              </div>
+            )}
           </div>
         </div>
 

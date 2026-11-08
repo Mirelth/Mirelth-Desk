@@ -50,8 +50,13 @@ function toDto(row: DocumentRow) {
 }
 
 export const documentsService = {
-  list(userId: string, search?: string) {
-    return documentsRepository.list(userId, search).map(toDto);
+  page(userId: string, search: string | undefined, page: { limit: number; offset: number }) {
+    return {
+      items: documentsRepository.list(userId, search, page).map(toDto),
+      total: documentsRepository.count(userId, search),
+      limit: page.limit,
+      offset: page.offset,
+    };
   },
 
   get(userId: string, id: string) {

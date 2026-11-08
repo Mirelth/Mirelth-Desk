@@ -4,8 +4,8 @@ import { Button, Field, Icon } from '../lib/ui.tsx';
 import type { AiMode, User } from '../lib/types.ts';
 
 export function Login({ onSuccess }: { onSuccess: (user: User, mode: AiMode) => void }) {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -39,7 +39,7 @@ export function Login({ onSuccess }: { onSuccess: (user: User, mode: AiMode) => 
           </form>
         </div>
         <div className="login-hint">
-          本地单机版默认账号 <strong>{username}</strong> / 密码 <strong>admin123</strong>。可在项目根目录 <code>.env</code> 中通过 <code>ADMIN_PASSWORD</code> 修改。
+          使用项目根目录 <code>.env</code> 中配置的 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 登录。
         </div>
       </div>
     </div>

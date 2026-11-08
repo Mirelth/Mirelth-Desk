@@ -1,5 +1,6 @@
 import { aiStatus, chatWithTools, type PlatformMessage } from '../../ai/provider.ts';
 import { generate } from '../../ai/provider.ts';
+import { config } from '../../shared/config.ts';
 import { now } from '../../shared/crypto.ts';
 import { AppError } from '../../shared/errors.ts';
 import { logger } from '../../shared/logger.ts';
@@ -27,7 +28,7 @@ interface AgentDefinition {
   model: string; max_steps: number;
 }
 
-const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT ?? '200');
+const DAILY_LIMIT = config.ai.dailyLimit;
 
 function checkQuota(userId: string): void {
   const today = new Date().toISOString().slice(0, 10);

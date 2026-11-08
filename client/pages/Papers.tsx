@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { apiClient, downloadFile, getErrorMessage, streamTask } from '../lib/api.ts';
-import { useLoad, useStream } from '../lib/hooks.ts';
+import { useLoad, usePaged, useStream } from '../lib/hooks.ts';
 import type { PaperDto, PaperStats, TaskKind } from '../lib/types.ts';
 import { AiOutput, Badge, Button, EmptyState, ErrorBanner, Field, Icon, IconButton, Modal, Skeleton, useToast } from '../lib/ui.tsx';
 
@@ -23,7 +23,7 @@ export function Papers({ onChanged }: { onChanged?: () => void }) {
   const [status, setStatus] = useState('');
   const [tag, setTag] = useState('');
   const query = `/api/papers?q=${encodeURIComponent(q)}&status=${encodeURIComponent(status)}&tag=${encodeURIComponent(tag)}`;
-  const list = useLoad<PaperDto[]>(() => apiClient.get<PaperDto[]>(query), [query]);
+  const list = usePaged<PaperDto>(query, 20);
   const stats = useLoad<PaperStats>(() => apiClient.get<PaperStats>('/api/papers/stats'));
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -110,13 +110,13 @@ export function Papers({ onChanged }: { onChanged?: () => void }) {
     stream.setRunning(true);
     let full = '';
     try {
-      await streamTask(kind, { papers: (list.data ?? []).slice(0, 40), filter: { tag, status } }, {
+      await streamTask(kind, { papers: list.items.slice(0, 40), filter: { tag, status } }, {
         onDelta: (chunk) => { full += chunk; stream.setText(full); },
         onMeta: (meta) => stream.setLabel(meta.label),
         onError: (message) => stream.setError(message),
-      });
+      }, stream.signal);
     } catch (error) { stream.setError(getErrorMessage(error)); }
-    finally { stream.setRunning(false); }
+    finally { stream.setRunning(false); onChanged?.(); }
   };
 
   return (
@@ -160,7 +160,7 @@ export function Papers({ onChanged }: { onChanged?: () => void }) {
           <Button variant="soft" size="sm" icon="bolt" disabled={stream.running} onClick={() => void runAi('paper.summary', '研究脉络分析')}>脉络分析</Button>
           <Button variant="soft" size="sm" icon="file" disabled={stream.running} onClick={() => void runAi('paper.review', '综述大纲')}>综述大纲</Button>
           <Button variant="soft" size="sm" icon="wand" disabled={stream.running} onClick={() => void runAi('paper.synthesize', '综述初稿')}>综述初稿</Button>
-          <span className="grow" /><span className="text-xs muted">基于当前筛选的 {list.data?.length ?? 0} 篇文献</span>
+          <span className="grow" /><span className="text-xs muted">已加载 {list.items.length} / {list.total} 篇文献</span>
         </div>
         <div className="ai-panel" style={{ borderRadius: '0 0 16px 16px' }}>
           <AiOutput text={stream.text} running={stream.running} error={stream.error}
@@ -171,10 +171,17 @@ export function Papers({ onChanged }: { onChanged?: () => void }) {
       </div>
 
       {list.error && <ErrorBanner message={list.error} onRetry={() => void list.reload()} />}
-      {list.loading && !list.data ? <Skeleton height={180} /> : null}
-      {list.data?.length ? (
+      {list.hasMore && (
+        <div className="row mt-12">
+          <Button variant="ghost" size="sm" loading={list.loading} onClick={() => void list.loadMore()}>
+            加载更多（{list.items.length}/{list.total}）
+          </Button>
+        </div>
+      )}
+      {list.loading && !list.items.length ? <Skeleton height={180} /> : null}
+      {list.items.length ? (
         <div className="paper-grid">
-          {list.data.map((paper) => (
+          {list.items.map((paper) => (
             <article className="paper-card" key={paper.id}>
               <div className="paper-head">
                 <h4>{paper.title}</h4>

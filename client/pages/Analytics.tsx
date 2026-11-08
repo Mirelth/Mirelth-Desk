@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient, downloadFile, getErrorMessage, streamTask } from '../lib/api.ts';
-import { useLoad, useStream } from '../lib/hooks.ts';
+import { useLoad, usePaged, useStream } from '../lib/hooks.ts';
 import type { DatasetDto, DatasetSummary, TaskKind } from '../lib/types.ts';
 import {
   AiOutput, BarChart, Button, EmptyState, ErrorBanner, Field, Icon, LineChart, Modal,
@@ -11,7 +11,7 @@ const SAMPLE = `月份,产品线,营收,成本,新客户\n1月,文档,128,62,24\
 
 export function Analytics({ onChanged }: { onChanged?: () => void }) {
   const toast = useToast();
-  const list = useLoad<DatasetSummary[]>(() => apiClient.get<DatasetSummary[]>('/api/analytics/datasets'));
+  const list = usePaged<DatasetSummary>('/api/analytics/datasets', 20);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const detail = useLoad<DatasetDto | null>(() =>
     selectedId ? apiClient.get<DatasetDto>(`/api/analytics/datasets/${selectedId}`) : Promise.resolve(null), [selectedId]);
@@ -24,9 +24,9 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
   const stream = useStream();
 
   useEffect(() => {
-    if (!list.data?.length) return;
-    if (!selectedId || !list.data.some((item) => item.id === selectedId)) setSelectedId(list.data[0].id);
-  }, [list.data, selectedId]);
+    if (!list.items?.length) return;
+    if (!selectedId || !list.items.some((item) => item.id === selectedId)) setSelectedId(list.items[0].id);
+  }, [list.items, selectedId]);
 
   const upload = async () => {
     if (!csv.trim()) { toast('请先选择 CSV 文件或粘贴内容', 'error'); return; }
@@ -68,9 +68,9 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
         onDelta: (chunk) => { full += chunk; stream.setText(full); },
         onMeta: (meta) => stream.setLabel(meta.label),
         onError: (message) => stream.setError(message),
-      });
+      }, stream.signal);
     } catch (error) { stream.setError(getErrorMessage(error)); }
-    finally { stream.setRunning(false); }
+    finally { stream.setRunning(false); onChanged?.(); }
   };
 
   const remove = async () => {
@@ -102,11 +102,11 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
 
       <div className="split-layout wide-list">
         <div className="card list-pane">
-          <div className="card-head"><div><h3>数据集</h3><div className="sub">{list.data?.length ?? 0} 个数据集</div></div>
+          <div className="card-head"><div><h3>数据集</h3><div className="sub">{list.items?.length ?? 0} 个数据集</div></div>
             <Icon name="chart" size={16} className="muted" /></div>
           <div className="list-scroll">
-            {list.loading && !list.data ? <div style={{ padding: 12 }}><Skeleton height={70} /></div> : null}
-            {list.data?.length ? list.data.map((item) => (
+            {list.loading && !list.items ? <div style={{ padding: 12 }}><Skeleton height={70} /></div> : null}
+            {list.items?.length ? list.items.map((item) => (
               <button type="button" key={item.id} className={`list-item ${selectedId === item.id ? 'active' : ''}`}
                 onClick={() => { setSelectedId(item.id); stream.reset(); }}>
                 <div className="list-title">{item.name}</div>

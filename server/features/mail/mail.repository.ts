@@ -74,20 +74,38 @@ export const mailRepository = {
     run('DELETE FROM mail_accounts WHERE id = ? AND user_id = ?', id, userId);
   },
 
-  messages(userId: string, filters: { folder?: string; q?: string; limit?: number } = {}): MessageRow[] {
+  where(filters: { folder?: string; q?: string }): { clause: string; params: unknown[] } {
     const conditions = ['user_id = ?'];
-    const params: unknown[] = [userId];
+    const params: unknown[] = [];
     if (filters.folder) { conditions.push('folder = ?'); params.push(filters.folder); }
     if (filters.q) {
       conditions.push('(subject LIKE ? OR body_text LIKE ? OR from_addr LIKE ? OR to_addr LIKE ?)');
       const pattern = `%${filters.q}%`;
       params.push(pattern, pattern, pattern, pattern);
     }
+    return { clause: conditions.join(' AND '), params };
+  },
+
+  messages(userId: string, filters: { folder?: string; q?: string; limit?: number } = {}): MessageRow[] {
+    const { clause, params } = this.where(filters);
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 200);
     return all<MessageRow>(
-      `SELECT * FROM messages WHERE ${conditions.join(' AND ')} ORDER BY sent_at DESC, rowid DESC LIMIT ${limit}`,
-      ...params,
+      `SELECT * FROM messages WHERE ${clause} ORDER BY sent_at DESC, rowid DESC LIMIT ${limit}`,
+      userId, ...params,
     );
+  },
+
+  page(userId: string, filters: { folder?: string; q?: string }, page: { limit: number; offset: number }): MessageRow[] {
+    const { clause, params } = this.where(filters);
+    return all<MessageRow>(
+      `SELECT * FROM messages WHERE ${clause} ORDER BY sent_at DESC, rowid DESC LIMIT ? OFFSET ?`,
+      userId, ...params, page.limit, page.offset,
+    );
+  },
+
+  count(userId: string, filters: { folder?: string; q?: string } = {}): number {
+    const { clause, params } = this.where(filters);
+    return get<{ count: number }>(`SELECT COUNT(*) AS count FROM messages WHERE ${clause}`, userId, ...params)?.count ?? 0;
   },
 
   message(userId: string, id: string): MessageRow | undefined {
@@ -113,13 +131,13 @@ export const mailRepository = {
     return true;
   },
 
-  insertSent(userId: string, input: { accountId: string | null; to: string; subject: string; body: string; remoteId: string }): string {
+  insertSent(userId: string, input: { accountId: string | null; from: string; to: string; subject: string; body: string; remoteId: string }): string {
     const id = newId('msg');
     run(
       `INSERT INTO messages (id, user_id, account_id, folder, remote_id, subject, from_addr, to_addr, body_text,
        sent_at, is_read, ai_summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id, userId, input.accountId, 'sent', input.remoteId, input.subject,
-      input.accountId ? '我 <local>' : '我 <演示账户>', input.to, input.body, now(), 1, '', now(),
+      input.from, input.to, input.body, now(), 1, '', now(),
     );
     return id;
   },

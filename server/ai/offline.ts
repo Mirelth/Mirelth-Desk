@@ -89,7 +89,7 @@ function documentOutline(input: AiInput): string {
     '## 四、数据与证据', '- 写作提示：用表格承载关键指标，避免文字堆砌数字。',
     '## 五、风险与应对', '- 写作提示：列出主要风险、影响面与缓解措施。',
     '## 六、结论与行动项', '- 写作提示：一句话结论 + 编号待办（含截止时间）。',
-    ...(points.length ? ['', '## 需要覆盖的要点', bulletLines(points.map(clip))] : []),
+    ...(points.length ? ['', '## 需要覆盖的要点', bulletLines(points.map((item) => clip(item)))] : []),
   ].join('\n');
 }
 
@@ -97,7 +97,7 @@ function documentDraft(input: AiInput): string {
   const title = text(input, 'title', '工作文档');
   const kind = text(input, 'template', '通用文档');
   const points = items<string>(input, 'points').filter((p) => typeof p === 'string');
-  const bodyPoints = points.length ? points.map(clip) : ['明确本次工作的目标与范围', '梳理现状与关键约束', '给出可执行的推进方案'];
+  const bodyPoints = points.length ? points.map((item) => clip(item)) : ['明确本次工作的目标与范围', '梳理现状与关键约束', '给出可执行的推进方案'];
   return [
     `# ${title}`, '', `> 文档类型：${kind} ｜ 状态：初稿（请补充具体数据与责任人）`, '',
     '## 一、背景与目标',
@@ -148,7 +148,7 @@ function documentPolish(input: AiInput): string {
 
 function documentContinue(input: AiInput): string {
   const source = text(input, 'content');
-  const lastLines = source.split('\n').filter((line) => line.trim()).slice(-3).map(clip);
+  const lastLines = source.split('\n').filter((line) => line.trim()).slice(-3).map((item) => clip(item));
   return [
     '## 续写内容', '',
     '在现有工作基础上，建议进一步明确衡量口径：把目标拆解为可观测的指标，并为每个指标指定数据来源与复核人。这样既能保证阶段结论可验证，也便于在复盘时定位偏差来源。', '',
@@ -258,7 +258,7 @@ function mailReply(input: AiInput): string {
   const tone = text(input, 'tone', '专业礼貌');
   const requests = body.split('\n').map((line) => line.trim())
     .filter((line) => line.length > 3 && /[?？]|请|需要|建议|确认|补充|统一|准备|评审/.test(line))
-    .slice(0, 4).map(clip);
+    .slice(0, 4).map((item) => clip(item));
   const name = from.includes('<') ? from.split('<')[0].trim() : from.split('@')[0] || '您好';
   return [
     `**主题**：Re: ${subject}`, '', `${name} 你好，`, '',
@@ -283,8 +283,22 @@ function mailSummary(input: AiInput): string {
     `- **一句话**：${clip(sentences[0] ?? text(input, 'subject', '邮件内容待补充'), 100)}`,
     `- **主题**：${text(input, 'subject', '（无主题）')}`,
     `- **发件人**：${text(input, 'from', '未知')}`, '',
-    '### 关键信息', bulletLines((sentences.slice(0, 3).length ? sentences.slice(0, 3) : ['正文暂无可提取信息']).map(clip)), '',
-    '### 待执行动作', bulletLines((keywords.length ? keywords : ['无需明确动作，建议归档留存']).slice(0, 4).map(clip)),
+    '### 关键信息', bulletLines((sentences.slice(0, 3).length ? sentences.slice(0, 3) : ['正文暂无可提取信息']).map((item) => clip(item))), '',
+    '### 待执行动作', bulletLines((keywords.length ? keywords : ['无需明确动作，建议归档留存']).slice(0, 4).map((item) => clip(item))),
+  ].join('\n');
+}
+
+function documentSummarize(input: AiInput): string {
+  const title = text(input, 'title', '未命名文档');
+  const body = text(input, 'content');
+  const sentences = body.split(/[\n。！？!?]/).map((part) => part.trim()).filter((part) => part.length > 4);
+  const actions = sentences.filter((sentence) => /请|需要|建议|确认|补充|统一|准备|上线|评审|时间|负责|推进/.test(sentence));
+  return [
+    '## 文档摘要', '',
+    `- **标题**：${title}`,
+    `- **一句话**：${clip(sentences[0] ?? '文档内容待补充', 120)}`, '',
+    '## 关键要点', bulletLines(sentences.slice(0, 5).length ? sentences.slice(0, 5).map((item) => clip(item)) : ['正文暂无可提取信息']), '',
+    '## 后续事项', bulletLines((actions.length ? actions : ['确认是否需补充数据、责任人与时间节点']).slice(0, 3).map((item) => clip(item))),
   ].join('\n');
 }
 
@@ -295,7 +309,7 @@ function mailCompose(input: AiInput): string {
   return [
     `**收件人**：${to}`, `**主题**：${subject}`, '', '各位好，', '',
     `就「${subject}」同步一下当前进展与需要确认的事项，便于后续对齐排期。`, '',
-    '### 主要内容', bulletLines(points.length ? points.map(clip) : ['当前进展与关键结论（待补充）', '需要协同确认的事项（待补充）']), '',
+    '### 主要内容', bulletLines(points.length ? points.map((item) => clip(item)) : ['当前进展与关键结论（待补充）', '需要协同确认的事项（待补充）']), '',
     '### 需要确认', '1. 上述口径与范围是否准确；', '2. 时间节点与责任人是否可行。', '',
     '如无异议，我们将按此推进；也欢迎直接回复补充意见。', '', '谢谢！', '我',
   ].join('\n');
@@ -347,7 +361,7 @@ export function offlineGenerate(kind: TaskKind, input: AiInput): string {
     case 'document.draft': return documentDraft(input);
     case 'document.polish': return documentPolish(input);
     case 'document.continue': return documentContinue(input);
-    case 'document.summarize': return mailSummary({ subject: text(input, 'title'), body: text(input, 'content'), from: '文档' });
+    case 'document.summarize': return documentSummarize(input);
     case 'analytics.insights': return analyticsInsights(input);
     case 'analytics.report': return analyticsInsights(input).replace('## ', '## 分析报告 · ');
     case 'paper.summary': return paperSynthesis(input, 'summary');

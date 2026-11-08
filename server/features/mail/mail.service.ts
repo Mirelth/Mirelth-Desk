@@ -147,16 +147,30 @@ export const mailService = {
     return mailRepository.messages(userId, filters).map(messageDto);
   },
 
+  page(userId: string, filters: { folder?: string; q?: string }, page: { limit: number; offset: number }) {
+    return {
+      items: mailRepository.page(userId, filters, page).map(messageDto),
+      total: mailRepository.count(userId, filters),
+      limit: page.limit,
+      offset: page.offset,
+    };
+  },
+
   get(userId: string, id: string) {
     const row = mailRepository.message(userId, id);
     if (!row) throw new NotFoundError('邮件', id);
-    if (!row.is_read) mailRepository.markRead(userId, id);
+    if (!row.is_read) {
+      mailRepository.markRead(userId, id);
+      activityService.record(userId, 'mail', 'read', `阅读邮件「${row.subject}」`);
+    }
     return messageDto({ ...row, is_read: 1 });
   },
 
   setRead(userId: string, id: string, isRead: boolean): void {
-    if (!mailRepository.message(userId, id)) throw new NotFoundError('邮件', id);
+    const row = mailRepository.message(userId, id);
+    if (!row) throw new NotFoundError('邮件', id);
     mailRepository.markRead(userId, id, isRead);
+    activityService.record(userId, 'mail', 'read', `标记邮件「${row.subject}」为${isRead ? '已读' : '未读'}`);
   },
 
   async send(userId: string, input: { to: string; subject: string; body: string; accountId?: string }) {
@@ -195,7 +209,9 @@ export const mailService = {
       }
     }
     const id = mailRepository.insertSent(userId, {
-      accountId: account?.id ?? null, to: input.to, subject: input.subject,
+      accountId: account?.id ?? null,
+      from: account ? `我 <${account.email}>` : '我 <演示账户>',
+      to: input.to, subject: input.subject,
       body: input.body, remoteId,
     });
     activityService.record(userId, 'mail', 'send', `${delivered ? '发送' : '本地保存'}邮件「${input.subject}」`);

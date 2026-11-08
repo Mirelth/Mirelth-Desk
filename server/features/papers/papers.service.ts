@@ -55,8 +55,18 @@ function parseBibtex(source: string): PaperInputDto[] {
 }
 
 export const papersService = {
+  /** 全量：统计 / 导出 / AI 用（不受分页影响）。 */
   list(userId: string, filters: { q?: string; status?: string; tag?: string } = {}) {
-    return papersRepository.list(userId, filters).map(toDto);
+    return papersRepository.all(userId, filters).map(toDto);
+  },
+
+  page(userId: string, filters: { q?: string; status?: string; tag?: string }, page: { limit: number; offset: number }) {
+    return {
+      items: papersRepository.page(userId, filters, page).map(toDto),
+      total: papersRepository.count(userId, filters),
+      limit: page.limit,
+      offset: page.offset,
+    };
   },
 
   stats(userId: string) {
@@ -97,6 +107,7 @@ export const papersService = {
       rating: input.rating, notes: input.notes,
       tagsJson: input.tags === undefined ? undefined : JSON.stringify(input.tags),
     });
+    activityService.record(userId, 'paper', 'update', `更新文献 ${id}`);
     return this.get(userId, id);
   },
 

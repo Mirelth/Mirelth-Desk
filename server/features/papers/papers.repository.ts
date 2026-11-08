@@ -36,9 +36,9 @@ export interface PaperInput {
 }
 
 export const papersRepository = {
-  list(userId: string, filters: { q?: string; status?: string; tag?: string } = {}): PaperRow[] {
+  where(filters: { q?: string; status?: string; tag?: string }): { clause: string; params: unknown[] } {
     const conditions = ['user_id = ?'];
-    const params: unknown[] = [userId];
+    const params: unknown[] = [];
     if (filters.q) {
       conditions.push('(title LIKE ? OR authors LIKE ? OR abstract LIKE ? OR venue LIKE ?)');
       const pattern = `%${filters.q}%`;
@@ -46,10 +46,26 @@ export const papersRepository = {
     }
     if (filters.status) { conditions.push('status = ?'); params.push(filters.status); }
     if (filters.tag) { conditions.push('tags LIKE ?'); params.push(`%${filters.tag}%`); }
+    return { clause: conditions.join(' AND '), params };
+  },
+
+  /** 全量读取：仅给统计 / 导出 / AI 用，不要接到列表接口上。 */
+  all(userId: string, filters: { q?: string; status?: string; tag?: string } = {}): PaperRow[] {
+    const { clause, params } = this.where(filters);
+    return all<PaperRow>(`SELECT * FROM papers WHERE ${clause} ORDER BY year DESC, created_at DESC, rowid DESC`, userId, ...params);
+  },
+
+  page(userId: string, filters: { q?: string; status?: string; tag?: string }, page: { limit: number; offset: number }): PaperRow[] {
+    const { clause, params } = this.where(filters);
     return all<PaperRow>(
-      `SELECT * FROM papers WHERE ${conditions.join(' AND ')} ORDER BY year DESC, created_at DESC, rowid DESC LIMIT 300`,
-      ...params,
+      `SELECT * FROM papers WHERE ${clause} ORDER BY year DESC, created_at DESC, rowid DESC LIMIT ? OFFSET ?`,
+      userId, ...params, page.limit, page.offset,
     );
+  },
+
+  count(userId: string, filters: { q?: string; status?: string; tag?: string } = {}): number {
+    const { clause, params } = this.where(filters);
+    return get<{ count: number }>(`SELECT COUNT(*) AS count FROM papers WHERE ${clause}`, userId, ...params)?.count ?? 0;
   },
 
   find(userId: string, id: string): PaperRow | undefined {

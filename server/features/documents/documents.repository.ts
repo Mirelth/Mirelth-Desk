@@ -27,16 +27,30 @@ export interface DocumentInput {
 }
 
 export const documentsRepository = {
-  list(userId: string, search?: string): DocumentRow[] {
+  list(userId: string, search: string | undefined, page: { limit: number; offset: number }): DocumentRow[] {
     if (search) {
       const pattern = `%${search}%`;
       return all<DocumentRow>(
         `SELECT * FROM documents WHERE user_id = ? AND (title LIKE ? OR content LIKE ? OR tags LIKE ?)
-         ORDER BY updated_at DESC, rowid DESC LIMIT 200`,
-        userId, pattern, pattern, pattern,
+         ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?`,
+        userId, pattern, pattern, pattern, page.limit, page.offset,
       );
     }
-    return all<DocumentRow>('SELECT * FROM documents WHERE user_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 200', userId);
+    return all<DocumentRow>(
+      'SELECT * FROM documents WHERE user_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?',
+      userId, page.limit, page.offset,
+    );
+  },
+
+  count(userId: string, search?: string): number {
+    if (search) {
+      const pattern = `%${search}%`;
+      return get<{ count: number }>(
+        'SELECT COUNT(*) AS count FROM documents WHERE user_id = ? AND (title LIKE ? OR content LIKE ? OR tags LIKE ?)',
+        userId, pattern, pattern, pattern,
+      )?.count ?? 0;
+    }
+    return get<{ count: number }>('SELECT COUNT(*) AS count FROM documents WHERE user_id = ?', userId)?.count ?? 0;
   },
 
   find(userId: string, id: string): DocumentRow | undefined {

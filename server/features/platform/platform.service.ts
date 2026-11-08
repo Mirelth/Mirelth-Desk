@@ -11,7 +11,7 @@ import { indexChunk, indexSize, reindex, search } from './rag.ts';
 import { audit, count, defaultWorkspace, deleteRows, insertRow, requireRole, row, rows, updateRows, ROLE_LEVEL } from './store.ts';
 import { allTools, executeTool, getTool, registerTool, toolManifest } from './tools.ts';
 
-const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT ?? '200');
+const DAILY_LIMIT = config.ai.dailyLimit;
 
 function filesDir(): string {
   return path.join(config.root, '.data', 'files');

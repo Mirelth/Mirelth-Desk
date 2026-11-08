@@ -13,9 +13,11 @@ seedWorkspaceApps();
 const stopScheduler = startAutomationScheduler();
 
 const app = createApp();
-const server = app.listen(config.port, () => {
+// 只监听回环：默认安装的账号口令与 SQLite 里的全部业务数据都不应暴露给同网段。
+const server = app.listen(config.port, '127.0.0.1', () => {
   logger.info('server.started', {
     port: config.port,
+    host: '127.0.0.1',
     env: config.nodeEnv,
     ai_mode: config.llm.enabled ? 'live' : 'offline',
   });

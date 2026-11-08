@@ -10,7 +10,16 @@ async function tick(): Promise<void> {
   try {
     const due = workspaceRepository.dueTasks(new Date().toISOString());
     for (const task of due) {
-      await workspaceService.runTask(task.user_id, task.id);
+      // 逐任务隔离：一条任务抛错（例如执行期间被删）不能连坐本轮剩下的任务。
+      try {
+        await workspaceService.runTask(task.user_id, task.id);
+      } catch (error) {
+        logger.error('automation.task_failed', {
+          task_id: task.id,
+          action: task.action,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     if (due.length) logger.info('automation.scheduler_tick', { executed: due.length });
   } catch (error) {

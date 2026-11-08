@@ -1,5 +1,6 @@
 import { all, get, run } from '../../shared/database.ts';
 import { newId, now } from '../../shared/crypto.ts';
+import { ForbiddenError } from '../../shared/errors.ts';
 
 const TABLES = [
   'workspaces', 'memberships', 'conversations', 'conversation_messages', 'memories',
@@ -17,7 +18,7 @@ function assertTable(table: TableName): void {
 export function insertRow(table: TableName, row: Record<string, unknown>): string {
   assertTable(table);
   const id = typeof row.id === 'string' ? row.id : newId(table.slice(0, 3));
-  const data = { id, ...row, ...(Object.prototype.hasOwnProperty.call(row, 'created_at') ? {} : { created_at: now() }) };
+  const data: Record<string, unknown> = { id, ...row, ...(Object.prototype.hasOwnProperty.call(row, 'created_at') ? {} : { created_at: now() }) };
   const keys = Object.keys(data);
   run(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`, ...keys.map((key) => data[key]));
   return id;
@@ -71,9 +72,7 @@ export const ROLE_LEVEL: Record<string, number> = { viewer: 1, member: 2, admin:
 export function requireRole(workspaceId: string, userId: string, minimum: string): void {
   const role = roleOf(workspaceId, userId);
   if (!role || (ROLE_LEVEL[role] ?? 0) < (ROLE_LEVEL[minimum] ?? 99)) {
-    const error = new Error('当前工作区权限不足');
-    (error as Error & { status?: number }).status = 403;
-    throw error;
+    throw new ForbiddenError('当前工作区权限不足');
   }
 }
 

@@ -53,6 +53,7 @@ const HOME_APPS: HomeApp[] = [
   { icon: 'book', name: '论文整理', description: '文献库、引用与综述', color: '#f3a43a', bg: '#fff3df', page: 'papers', metric: 'papers', unit: '篇' },
   { icon: 'flask', name: '科学研究', description: '项目、实验与任务看板', color: '#9b6cff', bg: '#f4efff', page: 'research', metric: 'experiments', unit: '个' },
   { icon: 'mail', name: '智能邮箱', description: '收发、摘要与回复', color: '#ef6c83', bg: '#ffedf1', page: 'mail', metric: 'unreadMail', unit: '封未读' },
+  { icon: 'headphones', name: '智能体工作台', description: '多轮会话、工具与知识库', color: '#7c5cff', bg: '#f0ecff', page: 'platform' },
   { icon: 'settings', name: '设置', description: '模型、账户与本机状态', color: '#3a8fdf', bg: '#e9f3ff', page: 'settings' },
 ];
 

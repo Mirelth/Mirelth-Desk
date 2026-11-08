@@ -1,6 +1,6 @@
 import { aiStatus, generate } from '../../ai/provider.ts';
 import { decryptSecret, encryptSecret } from '../../shared/crypto.ts';
-import { BadRequestError, NotFoundError } from '../../shared/errors.ts';
+import { AppError, BadRequestError, NotFoundError } from '../../shared/errors.ts';
 import { logger } from '../../shared/logger.ts';
 import { activityService } from '../activity/activity.service.ts';
 import { analyticsService } from '../analytics/analytics.service.ts';
@@ -69,6 +69,51 @@ function validateUrl(value: string): void {
   }
 }
 
+async function performConnectorTest(userId: string, id: string): Promise<{ ok: boolean; detail: string; status?: number }> {
+  if (id.startsWith('builtin-')) {
+    const item = workspaceService.listConnectors(userId).find((connector) => connector.id === id);
+    return item
+      ? { ok: item.status === 'connected', detail: item.status === 'connected' ? `${item.name} 已连接` : `${item.name} 未配置，当前不可用` }
+      : { ok: false, detail: '内置连接器不存在' };
+  }
+  const row = workspaceRepository.connector(userId, id);
+  if (!row) throw new NotFoundError('连接器', id);
+  const headers: Record<string, string> = {};
+  if (row.token_encrypted) {
+    try {
+      headers.Authorization = `Bearer ${decryptSecret(row.token_encrypted)}`;
+    } catch (error) {
+      // 不能静默跳过：不发 Authorization 头会把「凭据坏了」表现成对方的 401。
+      const detail = error instanceof AppError ? error.message : '凭据解密失败，请重新填写 Token';
+      workspaceRepository.updateConnector(userId, id, {
+        status: 'error', last_checked_at: new Date().toISOString(), last_error: detail.slice(0, 300),
+      });
+      return { ok: false, detail };
+    }
+  }
+  try {
+    const response = await fetch(row.base_url, { method: 'GET', headers, signal: AbortSignal.timeout(6000) });
+    const ok = response.ok;
+    const detail = ok
+      ? `${row.base_url} 返回 HTTP ${response.status}`
+      : response.status === 401 || response.status === 403
+        ? `${row.base_url} 鉴权失败（HTTP ${response.status}），请检查 Token`
+        : `${row.base_url} 地址可达但返回 HTTP ${response.status}`;
+    workspaceRepository.updateConnector(userId, id, {
+      status: ok ? 'connected' : 'error',
+      last_checked_at: new Date().toISOString(),
+      last_error: ok ? '' : detail,
+    });
+    return { ok, detail, status: response.status };
+  } catch (caught) {
+    const detail = caught instanceof Error ? caught.message : String(caught);
+    workspaceRepository.updateConnector(userId, id, {
+      status: 'error', last_checked_at: new Date().toISOString(), last_error: detail.slice(0, 300),
+    });
+    return { ok: false, detail: `连接失败：${detail.slice(0, 200)}` };
+  }
+}
+
 export const workspaceService = {
   actions() { return AUTOMATION_ACTIONS; },
 
@@ -114,6 +159,7 @@ export const workspaceService = {
       enabled: input.enabled === undefined ? undefined : (input.enabled ? 1 : 0),
       nextRunAt,
     });
+    activityService.record(userId, 'agent', 'automation_update', `更新自动化任务「${input.name ?? current.name}」`);
     return taskDto(workspaceRepository.task(userId, id)!);
   },
 
@@ -239,6 +285,7 @@ export const workspaceService = {
       status: input.baseUrl ? 'disconnected' : undefined,
       last_error: input.baseUrl ? '' : undefined,
     });
+    activityService.record(userId, 'agent', 'connector_update', `更新连接器「${input.name ?? current.name}」`);
     return connectorDto(workspaceRepository.connector(userId, id)!);
   },
 
@@ -249,35 +296,10 @@ export const workspaceService = {
   },
 
   async testConnector(userId: string, id: string): Promise<{ ok: boolean; detail: string; status?: number }> {
-    if (id.startsWith('builtin-')) {
-      const item = this.listConnectors(userId).find((connector) => connector.id === id);
-      return item
-        ? { ok: item.status === 'connected', detail: item.status === 'connected' ? `${item.name} 已连接` : `${item.name} 未配置，当前不可用` }
-        : { ok: false, detail: '内置连接器不存在' };
-    }
-    const row = workspaceRepository.connector(userId, id);
-    if (!row) throw new NotFoundError('连接器', id);
-    const headers: Record<string, string> = {};
-    if (row.token_encrypted) {
-      try { headers.Authorization = `Bearer ${decryptSecret(row.token_encrypted)}`; }
-      catch { /* ignore corrupt token */ }
-    }
-    try {
-      const response = await fetch(row.base_url, { method: 'GET', headers, signal: AbortSignal.timeout(6000) });
-      const ok = response.status < 500;
-      const detail = `${row.base_url} 返回 HTTP ${response.status}`;
-      workspaceRepository.updateConnector(userId, id, {
-        status: ok ? 'connected' : 'error',
-        last_checked_at: new Date().toISOString(),
-        last_error: ok ? '' : detail,
-      });
-      return { ok, detail, status: response.status };
-    } catch (caught) {
-      const detail = caught instanceof Error ? caught.message : String(caught);
-      workspaceRepository.updateConnector(userId, id, {
-        status: 'error', last_checked_at: new Date().toISOString(), last_error: detail.slice(0, 300),
-      });
-      return { ok: false, detail: `连接失败：${detail.slice(0, 200)}` };
-    }
+    const outcome = await performConnectorTest(userId, id);
+    activityService.record(userId, 'agent', 'connector_test', `测试连接器 ${id}：${outcome.ok ? '成功' : '失败'}`);
+    return outcome;
   },
+
+
 };

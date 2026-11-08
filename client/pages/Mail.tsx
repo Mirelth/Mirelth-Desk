@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient, getErrorMessage, streamTask } from '../lib/api.ts';
-import { useLoad, useStream } from '../lib/hooks.ts';
+import { useLoad, usePaged, useStream } from '../lib/hooks.ts';
 import type { MailAccountDto, MailStatus, MessageDto } from '../lib/types.ts';
 import {
   AiOutput, Badge, Button, EmptyState, ErrorBanner, Field, Icon, IconButton, MarkdownView, Modal,
@@ -33,8 +33,8 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
   const [q, setQ] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const status = useLoad<MailStatus>(() => apiClient.get<MailStatus>('/api/mail/status'));
-  const listQuery = `/api/mail/messages?folder=${folder}&q=${encodeURIComponent(q)}&limit=100`;
-  const messages = useLoad<MessageDto[]>(() => apiClient.get<MessageDto[]>(listQuery), [listQuery]);
+  const listQuery = `/api/mail/messages?folder=${folder}&q=${encodeURIComponent(q)}`;
+  const messages = usePaged<MessageDto>(listQuery, 50);
   const detail = useLoad<MessageDto | null>(() =>
     selectedId ? apiClient.get<MessageDto>(`/api/mail/messages/${selectedId}`) : Promise.resolve(null), [selectedId]);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -49,9 +49,9 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
   const stream = useStream();
 
   useEffect(() => {
-    if (!messages.data?.length) { setSelectedId(null); return; }
-    if (!selectedId || !messages.data.some((item) => item.id === selectedId)) setSelectedId(messages.data[0].id);
-  }, [messages.data, selectedId]);
+    if (!messages.items?.length) { setSelectedId(null); return; }
+    if (!selectedId || !messages.items.some((item) => item.id === selectedId)) setSelectedId(messages.items[0].id);
+  }, [messages.items, selectedId]);
 
   const loadAccounts = async () => {
     try { setAccounts(await apiClient.get<MailAccountDto[]>('/api/mail/accounts')); } catch { /* ignore */ }
@@ -87,6 +87,7 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
       setAccountOpen(false);
       setAccountForm(EMPTY_ACCOUNT);
       await Promise.all([status.reload(), loadAccounts()]);
+      onChanged?.();
       toast('邮箱账户已保存，密码经加密后仅存本机', 'success');
     } catch (error) { toast(getErrorMessage(error), 'error'); }
   };
@@ -96,6 +97,7 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
     try {
       await apiClient.delete(`/api/mail/accounts/${id}`);
       await Promise.all([status.reload(), loadAccounts()]);
+      onChanged?.();
       toast('账户已移除', 'success');
     } catch (error) { toast(getErrorMessage(error), 'error'); }
   };
@@ -110,9 +112,9 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
         onDelta: (chunk) => { full += chunk; stream.setText(full); },
         onMeta: (meta) => stream.setLabel(meta.label),
         onError: (message) => stream.setError(message),
-      });
+      }, stream.signal);
     } catch (error) { stream.setError(getErrorMessage(error)); }
-    finally { stream.setRunning(false); }
+    finally { stream.setRunning(false); onChanged?.(); }
   };
 
   const runSummary = async () => {
@@ -126,7 +128,7 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
       await detail.reload();
       toast('摘要已生成并保存到邮件', 'success');
     } catch (error) { stream.setError(getErrorMessage(error)); }
-    finally { stream.setRunning(false); }
+    finally { stream.setRunning(false); onChanged?.(); }
   };
 
   const draftCompose = async () => {
@@ -174,7 +176,7 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
       <div className="mail-layout">
         <div className="card mail-folders">
           <button type="button" className={`folder-item ${folder === 'inbox' ? 'active' : ''}`} onClick={() => { setFolder('inbox'); setSelectedId(null); }}>
-            <Icon name="inbox" size={16} />收件箱<span className="count">{messages.data?.filter((item) => !item.isRead && folder === 'inbox').length ?? 0}</span>
+            <Icon name="inbox" size={16} />收件箱<span className="count">{messages.items?.filter((item) => !item.isRead && folder === 'inbox').length ?? 0}</span>
           </button>
           <button type="button" className={`folder-item ${folder === 'sent' ? 'active' : ''}`} onClick={() => { setFolder('sent'); setSelectedId(null); }}>
             <Icon name="send" size={16} />已发送
@@ -191,8 +193,8 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
           <div className="list-search"><div className="search-box"><Icon name="search" size={15} />
             <input placeholder="搜索邮件…" value={q} onChange={(event) => setQ(event.target.value)} /></div></div>
           <div className="list-scroll">
-            {messages.loading && !messages.data ? <div style={{ padding: 12 }}><Skeleton height={70} /><Skeleton height={70} /></div> : null}
-            {messages.data?.length ? messages.data.map((message) => (
+            {messages.loading && !messages.items.length ? <div style={{ padding: 12 }}><Skeleton height={70} /><Skeleton height={70} /></div> : null}
+            {messages.items?.length ? messages.items.map((message) => (
               <button type="button" key={message.id} className={`list-item ${selectedId === message.id ? 'active' : ''}`}
                 onClick={() => { setSelectedId(message.id); stream.reset(); setAiAction(''); }}>
                 <div className="list-title">
@@ -203,6 +205,13 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
                 <div className="list-excerpt">{message.excerpt}</div>
               </button>
             )) : !messages.loading && <EmptyState icon="mail" title="没有邮件" hint="点击「同步收件箱」拉取新邮件。" />}
+            {messages.hasMore && (
+              <div style={{ padding: 8 }}>
+                <Button variant="ghost" size="sm" loading={messages.loading} onClick={() => void messages.loadMore()}>
+                  加载更多（{messages.items.length}/{messages.total}）
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 

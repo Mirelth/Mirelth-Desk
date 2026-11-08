@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler, type AuthenticatedRequest } from '../../shared/http.ts';
+import { asyncHandler, pageQuery, type AuthenticatedRequest } from '../../shared/http.ts';
 import { validateBody } from '../../shared/validate.ts';
 import { currentUserId } from '../auth/auth.middleware.ts';
 import { analyticsService } from './analytics.service.ts';
@@ -18,7 +18,7 @@ const insightsSchema = z.object({
 export const analyticsRouter = Router();
 
 analyticsRouter.get('/datasets', asyncHandler<AuthenticatedRequest>(async (req, res) => {
-  res.json({ data: analyticsService.list(currentUserId(req)) });
+  res.json({ data: analyticsService.page(currentUserId(req), pageQuery(req)) });
 }));
 
 analyticsRouter.post('/datasets', validateBody(uploadSchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {

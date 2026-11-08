@@ -138,9 +138,9 @@ export function Research({ onChanged }: { onChanged?: () => void }) {
         onDelta: (chunk) => { full += chunk; stream.setText(full); },
         onMeta: (meta) => stream.setLabel(meta.label),
         onError: (message) => stream.setError(message),
-      });
+      }, stream.signal);
     } catch (error) { stream.setError(getErrorMessage(error)); }
-    finally { stream.setRunning(false); }
+    finally { stream.setRunning(false); onChanged?.(); }
   };
 
   const moveTask = async (task: TaskDto, status: string) => {

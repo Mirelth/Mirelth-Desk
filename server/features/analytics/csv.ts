@@ -28,6 +28,8 @@ export function parseCsv(raw: string): { headers: string[]; rows: DataRow[] } {
     }
     field += char;
   }
+  if (quoted) throw new BadRequestError('引号未闭合，请检查文件是否被截断');
+
   record.push(field);
   if (record.some((cell) => cell.trim() !== '')) records.push(record);
 
@@ -41,7 +43,12 @@ export function parseCsv(raw: string): { headers: string[]; rows: DataRow[] } {
     unique.add(header);
   }
 
-  const rows: DataRow[] = records.slice(1).map((cells) => {
+  const rows: DataRow[] = records.slice(1).map((cells, rowIndex) => {
+    // 多出表头列数的单元格：空的（行尾逗号）忽略，有内容就报错——静默丢掉一列比拒绝导入危险得多。
+    const overflow = cells.slice(headers.length).filter((cell) => cell.trim() !== '');
+    if (overflow.length) {
+      throw new BadRequestError(`第 ${rowIndex + 2} 行有 ${overflow.length} 个多余的单元格（表头只有 ${headers.length} 列）`);
+    }
     const row: DataRow = {};
     headers.forEach((header, index) => {
       const value = (cells[index] ?? '').trim();

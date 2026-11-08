@@ -12,8 +12,15 @@ export interface DatasetRow {
 }
 
 export const analyticsRepository = {
-  list(userId: string): DatasetRow[] {
-    return all<DatasetRow>('SELECT * FROM datasets WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 100', userId);
+  list(userId: string, page: { limit: number; offset: number } = { limit: 100, offset: 0 }): DatasetRow[] {
+    return all<DatasetRow>(
+      'SELECT * FROM datasets WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?',
+      userId, page.limit, page.offset,
+    );
+  },
+
+  count(userId: string): number {
+    return get<{ count: number }>('SELECT COUNT(*) AS count FROM datasets WHERE user_id = ?', userId)?.count ?? 0;
   },
 
   find(userId: string, id: string): DatasetRow | undefined {

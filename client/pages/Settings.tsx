@@ -14,7 +14,7 @@ LLM_MODEL=gpt-4o-mini
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your-strong-password`;
 
-export function Settings({ user, aiMode, onLogout }: { user: User; aiMode: AiMode; onLogout: () => void }) {
+export function Settings({ user, aiMode, onLogout, onChanged }: { user: User; aiMode: AiMode; onLogout: () => void; onChanged?: () => void }) {
   const toast = useToast();
   const ai = useLoad<AiStatus>(() => apiClient.get<AiStatus>('/api/agent/status'));
   const mail = useLoad<MailStatus>(() => apiClient.get<MailStatus>('/api/mail/status'));
@@ -25,6 +25,7 @@ export function Settings({ user, aiMode, onLogout }: { user: User; aiMode: AiMod
     try {
       await apiClient.delete(`/api/mail/accounts/${id}`);
       await Promise.all([mail.reload(), accounts.reload()]);
+      onChanged?.();
       toast('账户已移除', 'success');
     } catch (error) { toast(getErrorMessage(error), 'error'); }
   };

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler, rateLimit, type AuthenticatedRequest } from '../../shared/http.ts';
+import { asyncHandler, pageQuery, rateLimit, type AuthenticatedRequest } from '../../shared/http.ts';
 import { validateBody } from '../../shared/validate.ts';
 import { currentUserId } from '../auth/auth.middleware.ts';
 import { mailService } from './mail.service.ts';
@@ -59,8 +59,7 @@ mailRouter.post('/sync', rateLimit(10, 60_000), asyncHandler<AuthenticatedReques
 mailRouter.get('/messages', asyncHandler<AuthenticatedRequest>(async (req, res) => {
   const folder = typeof req.query.folder === 'string' ? req.query.folder : undefined;
   const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 100) : undefined;
-  const limit = Number.parseInt(String(req.query.limit ?? '100'), 10) || 100;
-  res.json({ data: mailService.list(currentUserId(req), { folder, q, limit }) });
+  res.json({ data: mailService.page(currentUserId(req), { folder, q }, pageQuery(req, 50)) });
 }));
 
 mailRouter.get('/messages/:id', asyncHandler<AuthenticatedRequest>(async (req, res) => {

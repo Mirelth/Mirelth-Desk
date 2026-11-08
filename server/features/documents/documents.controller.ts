@@ -1,25 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler, type AuthenticatedRequest } from '../../shared/http.ts';
+import { asyncHandler, pageQuery, type AuthenticatedRequest } from '../../shared/http.ts';
 import { validateBody } from '../../shared/validate.ts';
 import { currentUserId } from '../auth/auth.middleware.ts';
 import { DOCUMENT_TEMPLATES, documentsService } from './documents.service.ts';
-
-const createSchema = z.object({
-  title: z.string().min(1, '标题不能为空').max(200),
-  content: z.string().max(200_000).optional().default(''),
-  kind: z.string().max(40).optional(),
-  template: z.string().max(40).nullable().optional(),
-  tags: z.array(z.string().max(40)).max(12).optional().default([]),
-  status: z.enum(['draft', 'review', 'final']).optional().default('draft'),
-});
-
-const updateSchema = createSchema.partial();
-
-const aiSchema = z.object({
-  action: z.enum(['outline', 'draft', 'polish', 'continue', 'summarize']),
-  points: z.array(z.string().max(200)).max(20).optional().default([]),
-});
+import { aiSchema, createSchema, updateSchema } from './documents.schema.ts';
 
 export const documentsRouter = Router();
 
@@ -29,7 +14,7 @@ documentsRouter.get('/templates', (_req, res) => {
 
 documentsRouter.get('/', asyncHandler<AuthenticatedRequest>(async (req, res) => {
   const search = typeof req.query.q === 'string' ? req.query.q.slice(0, 100) : undefined;
-  res.json({ data: documentsService.list(currentUserId(req), search) });
+  res.json({ data: documentsService.page(currentUserId(req), search, pageQuery(req)) });
 }));
 
 documentsRouter.post('/', validateBody(createSchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {

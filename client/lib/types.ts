@@ -1,4 +1,4 @@
-export type PageId = 'dashboard' | 'documents' | 'analytics' | 'papers' | 'research' | 'mail' | 'automation' | 'connectors' | 'settings';
+export type PageId = 'dashboard' | 'documents' | 'analytics' | 'papers' | 'research' | 'mail' | 'automation' | 'connectors' | 'platform' | 'settings';
 
 export type TaskKind =
   | 'document.outline' | 'document.draft' | 'document.polish' | 'document.continue' | 'document.summarize'
@@ -115,3 +115,56 @@ export interface ConnectorDto {
   lastCheckedAt: string | null; lastError: string;
   createdAt: string; updatedAt: string; builtin: boolean; detail?: string;
 }
+
+// ── platform（智能体工作台）────────────────────────────────────────────────
+export interface PlatformStatus {
+  mode: AiMode;
+  model: string;
+  baseUrl: string;
+  label: string;
+  workspace: { id: string; name: string; role: string };
+  tools: number;
+  knowledgeChunks: number;
+  conversations: number;
+  runs: number;
+  members: number;
+  quota: { limit: number; used: number };
+  features: string[];
+}
+
+export interface PlatformTool {
+  name: string;
+  description: string;
+  category: 'generate' | 'action' | 'custom';
+  parameters: { type: 'object'; properties: Record<string, { type: string; description: string }>; required?: string[] };
+}
+
+export interface PlatformConversation {
+  id: string; title: string; created_at: string; updated_at: string; messageCount: number;
+}
+
+export interface PlatformMessage {
+  id: string; role: string; content: string; created_at: string;
+}
+
+export interface PlatformConversationDetail {
+  id: string; title: string; messages: PlatformMessage[];
+}
+
+export interface PlatformRun {
+  id: string; status: string; input: string; output: string;
+  steps_count: number; tokens_estimate: number; duration_ms: number; created_at: string;
+}
+
+export interface PlatformRunStep {
+  id: string; run_id: string; step_index: number; kind: string; tool_name: string; input: string; output: string;
+}
+
+export interface PlatformRunDetail extends PlatformRun { steps: PlatformRunStep[] }
+
+export interface KnowledgeHit {
+  id: string; title: string; content: string; sourceType: string; sourceId: string; score: number;
+}
+
+/** 列表接口的分页信封：`data` 就是它。 */
+export interface Paged<T> { items: T[]; total: number; limit: number; offset: number }

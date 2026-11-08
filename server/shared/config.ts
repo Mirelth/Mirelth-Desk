@@ -83,6 +83,10 @@ export const config = {
   database: {
     path: path.resolve(ROOT, stringValue('DATABASE_PATH', '.data/mirelth.db')),
   },
+  ai: {
+    // 按天计数的模型调用配额，由 `platform` 的 engine 与 status 读取。
+    dailyLimit: intValue('AI_DAILY_LIMIT', 200),
+  },
 } as const;
 
 export type AppConfig = typeof config;

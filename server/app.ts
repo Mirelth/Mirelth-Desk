@@ -6,7 +6,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { config } from './shared/config.ts';
 import { db } from './shared/database.ts';
-import { errorHandler, requestIdMiddleware, requestLoggingMiddleware } from './shared/http.ts';
+import { errorHandler, requestIdMiddleware, requestLoggingMiddleware, sendError } from './shared/http.ts';
 import { logger } from './shared/logger.ts';
 import { authRouter } from './features/auth/auth.controller.ts';
 import { authenticate } from './features/auth/auth.middleware.ts';
@@ -17,6 +17,7 @@ import { papersRouter } from './features/papers/papers.controller.ts';
 import { researchRouter } from './features/research/research.controller.ts';
 import { mailRouter } from './features/mail/mail.controller.ts';
 import { agentRouter } from './features/agent/agent.controller.ts';
+import { platformRouter } from './features/platform/platform.controller.ts';
 import { automationRouter, connectorsRouter } from './features/workspace/workspace.controller.ts';
 
 export function createApp(): Express {
@@ -53,9 +54,10 @@ export function createApp(): Express {
   app.use('/api/agent', agentRouter);
   app.use('/api/automation', automationRouter);
   app.use('/api/connectors', connectorsRouter);
+  app.use('/api/platform', platformRouter);
 
   app.use('/api', (_req, res) => {
-    res.status(404).json({ title: 'NOT_FOUND', status: 404, detail: '接口不存在' });
+    sendError(res, 404, 'NOT_FOUND', '接口不存在');
   });
 
   const dist = path.join(config.root, 'dist');
