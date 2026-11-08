@@ -1,0 +1,23 @@
+- generic [ref=e4]:
+  - generic [ref=e10]:
+    - heading "Mirelth Desk" [level=1] [ref=e11]
+    - paragraph [ref=e12]: 办公智能体工作台
+  - paragraph [ref=e13]: 一个工作台，完成文档写作、数据分析、论文整理、科学研究与邮件沟通。所有数据保存在本机。
+  - generic [ref=e15]:
+    - generic [ref=e16]:
+      - generic [ref=e17]: 账号
+      - textbox "账号" [ref=e18]: admin
+    - generic [ref=e19]:
+      - generic [ref=e20]: 密码
+      - textbox "密码" [ref=e21]: admin123
+    - button "进入工作台" [ref=e22] [cursor=pointer]
+  - generic [ref=e25]:
+    - text: 本地单机版默认账号
+    - strong [ref=e26]: admin
+    - text: / 密码
+    - strong [ref=e27]: admin123
+    - text: 。可在项目根目录
+    - code [ref=e28]: .env
+    - text: 中通过
+    - code [ref=e29]: ADMIN_PASSWORD
+    - text: 修改。
