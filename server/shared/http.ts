@@ -3,8 +3,17 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { AppError, type FieldError } from './errors.ts';
 import { logger, runWithRequestId } from './logger.ts';
 
+export interface ApiKeyScope {
+  keyId: string;
+  workspaceId: string;
+  userId: string;
+  role: string;
+}
+
 export interface AuthenticatedRequest extends Request {
   userId?: string;
+  /** 由 `platform.auth.ts` 的 `apiKeyMiddleware` 填入；会话认证的请求没有这个字段。 */
+  apiKey?: ApiKeyScope;
 }
 
 export function requestIdMiddleware(req: Request, res: Response, next: NextFunction): void {

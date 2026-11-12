@@ -150,6 +150,60 @@ async function main(): Promise<void> {
   const streamText = await stream.text();
   check(stream.status === 200 && streamText.includes('event: delta') && streamText.includes('event: done'), 'POST /api/agent/run (SSE 流式)');
 
+  // —— platform：全组已挂载，这里验四类最容易静默坏掉的写路径 ——
+  const platformStatus = await request<Envelope<{ workspace: { id: string }; features: string[] }>>('/api/platform/status');
+  const workspaceId = platformStatus.data?.data.workspace.id ?? '';
+  check(platformStatus.status === 200 && Boolean(workspaceId), 'GET /api/platform/status');
+
+  const workspaces = await request<Envelope<Array<{ id: string }>>>('/api/platform/workspaces');
+  check(workspaces.status === 200 && Array.isArray(workspaces.data?.data), 'GET /api/platform/workspaces（原 deferred）');
+
+  const members = await request<Envelope<Array<{ userId: string }>>>(`/api/platform/workspaces/${workspaceId}/members`);
+  check(members.status === 200 && Array.isArray(members.data?.data), 'GET /api/platform/workspaces/:id/members');
+
+  const agent = await request<Envelope<{ id: string }>>('/api/platform/agents', {
+    method: 'POST', body: { name: '冒烟智能体', tools: ['document_outline'], maxSteps: 3 },
+  });
+  const agentId = agent.data?.data.id ?? '';
+  check(agent.status === 201 && Boolean(agentId), 'POST /api/platform/agents');
+  const agentRemoved = await request(`/api/platform/agents/${agentId}`, { method: 'DELETE' });
+  check(agentRemoved.status === 200, 'DELETE /api/platform/agents/:id');
+
+  const upload = await request<Envelope<{ id: string }>>('/api/platform/files', {
+    method: 'POST', body: { filename: 'smoke.txt', mime: 'text/plain', contentBase64: Buffer.from('冒烟附件').toString('base64') },
+  });
+  const fileId = upload.data?.data.id ?? '';
+  check(upload.status === 201 && Boolean(fileId), 'POST /api/platform/files');
+  const download = await request(`/api/platform/files/${fileId}/download`);
+  check(download.status === 200 && download.text === '冒烟附件', 'GET /api/platform/files/:id/download');
+
+  const workflow = await request<Envelope<{ id: string }>>('/api/platform/workflows', {
+    method: 'POST', body: { name: '冒烟工作流', nodes: [{ id: 'n1', tool: 'rag_search', args: { query: '周报' } }], edges: [] },
+  });
+  const workflowId = workflow.data?.data.id ?? '';
+  check(workflow.status === 200 && Boolean(workflowId), 'POST /api/platform/workflows');
+  const workflowRun = await request<Envelope<{ text: string }>>(`/api/platform/workflows/${workflowId}/run`, { method: 'POST' });
+  check(workflowRun.status === 200 && Boolean(workflowRun.data?.data.text), 'POST /api/platform/workflows/:id/run');
+
+  const key = await request<Envelope<{ id: string; key: string }>>(`/api/platform/workspaces/${workspaceId}/keys`, {
+    method: 'POST', body: { name: '冒烟 Key', role: 'member' },
+  });
+  const rawKey = key.data?.data.key ?? '';
+  check(key.status === 201 && rawKey.startsWith('mdk_'), 'POST /api/platform/workspaces/:id/keys');
+  if (rawKey) {
+    const hook = await fetch(`${BASE}/api/platform/webhook/smoke.event`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': rawKey }, body: '{}',
+    });
+    check(hook.status === 200, 'POST /api/platform/webhook/:key（带 X-Api-Key）');
+    const revoked = await request(`/api/platform/workspaces/${workspaceId}/keys/${key.data?.data.id}`, { method: 'DELETE' });
+    check(revoked.status === 200, 'DELETE /api/platform/workspaces/:id/keys/:keyId');
+  }
+
+  const audit = await request<Envelope<unknown[]>>('/api/platform/audit');
+  check(audit.status === 200 && Array.isArray(audit.data?.data), 'GET /api/platform/audit');
+  const usage = await request<Envelope<unknown[]>>('/api/platform/usage');
+  check(usage.status === 200 && Array.isArray(usage.data?.data), 'GET /api/platform/usage');
+
   const logout = await request('/api/auth/logout', { method: 'POST' });
   check(logout.status === 200, 'POST /api/auth/logout');
 

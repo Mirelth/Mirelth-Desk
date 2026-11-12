@@ -112,7 +112,7 @@ export function Connectors({ onChanged }: { onChanged?: () => void }) {
           <div className="card card-pad connector-card" key={item.id}>
             <div className="between">
               <div className="row">
-                <div className="stat-icon" style={{ color: '#5b6cff', background: '#eef0ff', margin: 0 }}><Icon name={KIND_ICON[item.kind] ?? 'settings'} size={17} /></div>
+                <div className="stat-icon" style={{ color: 'var(--primary)', background: 'var(--primary-soft)', margin: 0 }}><Icon name={KIND_ICON[item.kind] ?? 'settings'} size={17} /></div>
                 <div><h4>{item.name}</h4><div className="text-xs muted">{KIND_LABEL[item.kind] ?? item.kind}</div></div>
               </div>
               {statusBadge(item.status)}
@@ -140,7 +140,7 @@ export function Connectors({ onChanged }: { onChanged?: () => void }) {
             <div className="card card-pad connector-card" key={item.id}>
               <div className="between">
                 <div className="row">
-                  <div className="stat-icon" style={{ color: '#13bfa2', background: '#e4f9f4', margin: 0 }}><Icon name={KIND_ICON[item.kind] ?? 'external'} size={17} /></div>
+                  <div className="stat-icon" style={{ color: 'var(--accent)', background: 'var(--accent-soft)', margin: 0 }}><Icon name={KIND_ICON[item.kind] ?? 'external'} size={17} /></div>
                   <div><h4>{item.name}</h4><div className="text-xs muted">{KIND_LABEL[item.kind] ?? item.kind} · {item.enabled ? '已启用' : '已停用'}</div></div>
                 </div>
                 {statusBadge(item.status)}

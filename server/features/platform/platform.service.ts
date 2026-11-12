@@ -107,12 +107,14 @@ export const platformService = {
     if (patch.maxSteps !== undefined) mapped.max_steps = patch.maxSteps;
     if (patch.tools !== undefined) mapped.tool_whitelist = JSON.stringify(patch.tools);
     updateRows('agent_definitions', mapped, 'id = ? AND workspace_id = ?', [id, workspaceId]);
+    audit(workspaceId, userId, 'agent.update', id, String(patch.name ?? ''));
     return id;
   },
 
   deleteAgent(userId: string, workspaceId: string, id: string) {
     requireRole(workspaceId, userId, 'admin');
     deleteRows('agent_definitions', 'id = ? AND workspace_id = ?', [id, workspaceId]);
+    audit(workspaceId, userId, 'agent.delete', id);
   },
 
   conversations(userId: string, workspaceId: string) {
@@ -222,7 +224,10 @@ export const platformService = {
 
   files(userId: string, workspaceId: string) {
     requireRole(workspaceId, userId, 'viewer');
-    return rows('files', 'workspace_id = ?', [workspaceId], 'created_at DESC', 100);
+    // 只回给界面用得上的列：`path` 是本机绝对路径，不该出服务端。
+    return rows<{ id: string; filename: string; mime: string; size: number; created_at: string }>(
+      'files', 'workspace_id = ?', [workspaceId], 'created_at DESC', 100,
+    ).map((item) => ({ id: item.id, filename: item.filename, mime: item.mime, size: item.size, created_at: item.created_at }));
   },
 
   uploadFile(userId: string, workspaceId: string, input: { filename: string; mime: string; contentBase64: string }) {
@@ -259,8 +264,10 @@ export const platformService = {
     requireRole(workspaceId, userId, 'member');
     const eventId = insertRow('automation_events', { workspace_id: workspaceId, event_key: eventKey, payload: JSON.stringify(payload), status: 'pending' });
     const tasks = all<{ id: string }>(
-      "SELECT id FROM automation_tasks WHERE workspace_id = ? AND trigger_type = 'event' AND event_key = ? AND enabled = 1",
-      workspaceId, eventKey,
+      // 按 `user_id` 而不是 `workspace_id` 匹配：自动化任务在创建时不带工作区（`workspace_id` 为 NULL），
+      // 而事件总是发生在某个工作区里——按工作区匹配会让 `matched` 恒为 0。
+      "SELECT id FROM automation_tasks WHERE user_id = ? AND trigger_type = 'event' AND event_key = ? AND enabled = 1",
+      userId, eventKey,
     );
     let executed = 0;
     for (const task of tasks) {
@@ -290,7 +297,7 @@ export const platformService = {
       name: input.name, nodes: JSON.stringify(input.nodes), edges: JSON.stringify(input.edges),
       enabled: input.enabled === false ? 0 : 1, updated_at: now(),
     };
-    if (input.id) { updateRows('workflows', fields, 'id = ? AND workspace_id = ?', [input.id, workspaceId]); return input.id; }
+    if (input.id) { updateRows('workflows', fields, 'id = ? AND workspace_id = ?', [input.id, workspaceId]); audit(workspaceId, userId, 'workflow.update', input.id, input.name); return input.id; }
     const id = insertRow('workflows', { workspace_id: workspaceId, ...fields });
     audit(workspaceId, userId, 'workflow.save', id, input.name);
     return id;

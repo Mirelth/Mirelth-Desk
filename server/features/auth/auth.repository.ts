@@ -30,6 +30,24 @@ export const authRepository = {
     );
   },
 
+  /** 对外只暴露 id / username / createdAt，password_hash 与 salt 不出这个文件。 */
+  listUsers(): Array<{ id: string; username: string; createdAt: string }> {
+    return all<{ id: string; username: string; created_at: string }>(
+      'SELECT id, username, created_at FROM users ORDER BY created_at, rowid',
+    ).map((row) => ({ id: row.id, username: row.username, createdAt: row.created_at }));
+  },
+
+  /** 安装管理员 = 表里最早创建的账号（`ensureAdmin` 只建一次）。 */
+  firstUserId(): string | undefined {
+    return get<{ id: string }>('SELECT id FROM users ORDER BY created_at, rowid LIMIT 1')?.id;
+  },
+
+  deleteUser(id: string): void {
+    run('DELETE FROM sessions WHERE user_id = ?', id);
+    run('DELETE FROM memberships WHERE user_id = ?', id);
+    run('DELETE FROM users WHERE id = ?', id);
+  },
+
   countUsers(): number {
     return get<{ count: number }>('SELECT COUNT(*) AS count FROM users')?.count ?? 0;
   },

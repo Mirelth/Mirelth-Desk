@@ -1,14 +1,10 @@
 ---
 id: research
 type: module-design
-status: draft
+status: active
 title: 科学研究 · 项目、实验记录与任务看板
 parent: architecture
-depends-on:
-  - shared-kernel
-  - ai-layer
-  - activity
-  - auth
+depends-on: [shared-kernel, ai-layer, activity, auth]
 ---
 
 ## 职责
@@ -30,7 +26,7 @@ depends-on:
 ## 关键决定
 
 - **`overview` 一次返回全部三类**，不是三个分页接口：前端看板一次拿全量，`stats` 也在同一个响应里算。项目上的 `experimentCount`/`taskCount` 是 service 在内存里过滤出来再数的（`experiments.filter(...).length`），不是 SQL 聚合。
-- **AI 的上下文就是数据库里的记录，但产品路径在前端**：`researchService.ai` / `researchService.plan` 分别把实验六字段+项目名、项目字段+该项目实验与任务清单交给 `generate`；然而**前端不调 `/api/research/experiments/:id/ai` 与 `/projects/:id/plan`**，`client/pages/Research.tsx` 自己拼了同形 payload 打 `/api/agent/run`。所以「AI 知道多少」取决于这些字段填了没有，而改 payload 要同时改两处。
+- **AI 的上下文就是数据库里的记录，但产品路径在前端**：`researchService.ai` / `researchService.plan` 分别把实验的 8 个键（标题、目标、假设、方法、结果、结论、指标、项目名）、项目字段+该项目实验与任务清单交给 `generate`；然而**前端不调 `/api/research/experiments/:id/ai` 与 `/projects/:id/plan`**，`client/pages/Research.tsx` 自己拼了同形 payload 打 `/api/agent/run`。所以「AI 知道多少」取决于这些字段填了没有，而改 payload 要同时改两处。
 - **状态机是三个独立枚举、互不校验**：项目 `active/paused/archived`、实验 `planned/running/completed/abandoned`、任务 `todo/doing/done`。任务完成不会推进实验状态，实验完成也不会推进项目状态。
 
 ## 已知问题

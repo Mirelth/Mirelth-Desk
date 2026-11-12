@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { config } from '../../shared/config.ts';
 import { hashPassword, newId, now, readSession, signSession, verifyPassword } from '../../shared/crypto.ts';
-import { UnauthorizedError } from '../../shared/errors.ts';
+import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from '../../shared/errors.ts';
 import { logger } from '../../shared/logger.ts';
 import { authRepository } from './auth.repository.ts';
 
@@ -57,5 +57,34 @@ export const authService = {
 
   cleanup(): number {
     return authRepository.deleteExpiredSessions();
+  },
+
+  /** 安装管理员才能建号/删号：判定依据是「表里最早创建的账号」，不是环境变量里的用户名。 */
+  isInstallAdmin(userId: string): boolean {
+    return authRepository.firstUserId() === userId;
+  },
+
+  createUser(username: string, password: string): { id: string; username: string } {
+    if (authRepository.findByUsername(username)) throw new ConflictError('账号已存在');
+    const { hash, salt } = hashPassword(password);
+    const id = newId('usr');
+    authRepository.createUser({ id, username, password_hash: hash, salt, created_at: now() });
+    logger.info('auth.user_created', { user_id: id });
+    return { id, username };
+  },
+
+  listUsers(): Array<{ id: string; username: string; createdAt: string }> {
+    return authRepository.listUsers();
+  },
+
+  /** 不能删安装管理员，也不能删当前登录的账号；业务数据不跟随删除（各表没有指向 users 的外键）。 */
+  deleteUser(actorId: string, targetId: string): { id: string; username: string } {
+    if (authRepository.firstUserId() === targetId) throw new ConflictError('不能删除安装管理员');
+    if (actorId === targetId) throw new BadRequestError('不能删除当前登录的账号');
+    const target = authRepository.findById(targetId);
+    if (!target) throw new NotFoundError('账号', targetId);
+    authRepository.deleteUser(targetId);
+    logger.warn('auth.user_deleted', { user_id: targetId, by: actorId });
+    return { id: target.id, username: target.username };
   },
 };

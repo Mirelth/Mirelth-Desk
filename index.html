@@ -4,8 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b1020" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%235b6cff'/%3E%3Cpath d='M32 11l4.5 13.5L50 29l-13.5 4.5L32 47l-4.5-13.5L14 29l13.5-4.5z' fill='white'/%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%232f4bff'/%3E%3Cpath d='M32 11l4.5 13.5L50 29l-13.5 4.5L32 47l-4.5-13.5L14 29l13.5-4.5z' fill='white'/%3E%3C/svg%3E" />
     <title>Mirelth Desk · 办公智能体工作台</title>
+    <script>
+      // 首帧前定主题，避免深色用户刷新时闪一下白。与 client/lib/theme.ts 共用同一个 storage key。
+      try {
+        var mode = localStorage.getItem('mirelth.theme');
+        var dark = mode === 'dark' || (mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      } catch (error) {
+        document.documentElement.dataset.theme = 'light';
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

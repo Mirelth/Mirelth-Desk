@@ -115,7 +115,7 @@ export function Automation({ onChanged }: { onChanged?: () => void }) {
             <div className="card card-pad automation-card" key={task.id}>
               <div className="between wrap">
                 <div className="row">
-                  <div className="stat-icon" style={{ color: '#5b6cff', background: '#eef0ff', margin: 0 }}><Icon name="bolt" size={17} /></div>
+                  <div className="stat-icon" style={{ color: 'var(--primary)', background: 'var(--primary-soft)', margin: 0 }}><Icon name="bolt" size={17} /></div>
                   <div><h4>{task.name}</h4><div className="text-xs muted mt-8">{task.description || '暂无描述'}</div></div>
                 </div>
                 <div className="row wrap">

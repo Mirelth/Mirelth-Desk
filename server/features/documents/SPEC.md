@@ -1,14 +1,10 @@
 ---
 id: documents
 type: module-design
-status: draft
+status: active
 title: 文档协作 · 模板、AI 动作与导出
 parent: architecture
-depends-on:
-  - shared-kernel
-  - ai-layer
-  - activity
-  - auth
+depends-on: [shared-kernel, ai-layer, activity, auth]
 ---
 
 ## 职责

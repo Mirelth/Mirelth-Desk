@@ -18,7 +18,9 @@ import { researchRouter } from './features/research/research.controller.ts';
 import { mailRouter } from './features/mail/mail.controller.ts';
 import { agentRouter } from './features/agent/agent.controller.ts';
 import { platformRouter } from './features/platform/platform.controller.ts';
+import { apiKeyMiddleware } from './features/platform/platform.auth.ts';
 import { automationRouter, connectorsRouter } from './features/workspace/workspace.controller.ts';
+import { systemRouter } from './features/system/system.controller.ts';
 
 export function createApp(): Express {
   const app = express();
@@ -44,6 +46,8 @@ export function createApp(): Express {
   });
 
   app.use('/api/auth', authRouter);
+  // 入站 API Key 只对 /api/platform 的 webhook 与 mcp 生效，必须在会话鉴权之前。
+  app.use('/api/platform', apiKeyMiddleware);
   app.use('/api', authenticate);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/documents', documentsRouter);
@@ -55,6 +59,7 @@ export function createApp(): Express {
   app.use('/api/automation', automationRouter);
   app.use('/api/connectors', connectorsRouter);
   app.use('/api/platform', platformRouter);
+  app.use('/api/system', systemRouter);
 
   app.use('/api', (_req, res) => {
     sendError(res, 404, 'NOT_FOUND', '接口不存在');

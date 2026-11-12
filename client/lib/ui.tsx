@@ -281,7 +281,7 @@ export function LineChart({ data }: { data: Array<{ label: string; value: number
     <div ref={ref} style={{ width: '100%' }}>
       <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="趋势折线图">
         <defs><linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#6c7cff" stopOpacity="0.28" /><stop offset="100%" stopColor="#6c7cff" stopOpacity="0" />
+          <stop offset="0%" style={{ stopColor: 'var(--primary)' }} stopOpacity="0.28" /><stop offset="100%" style={{ stopColor: 'var(--primary)' }} stopOpacity="0" />
         </linearGradient></defs>
         {[0, 0.5, 1].map((ratio) => {
           const y = top + plotHeight * (1 - ratio);

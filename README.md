@@ -26,7 +26,7 @@ npm run smoke       # 端到端接口冒烟测试（需先启动服务）
 
 | 模块 | 能力 |
 | --- | --- |
-| 工作台 / 首页 | 统计概览、最近动态、自然语言入口、**应用宫格**、智能体对话抽屉（SSE 流式） |
+| 工作台 / 首页 | 一屏对话式入口：六个分类（日常办公/文档写作/数据分析/科学研究/衣食出行/人文娱乐）各 3 组任务卡，点卡片把提示词填进输入框；智能体对话抽屉（SSE 流式） |
 | 文档协作 | 6 类模板、Markdown 编辑/预览、AI 大纲/起草/润色/续写/摘要、MD/HTML 导出 |
 | 数据分析 | CSV 导入与类型推断、描述统计、分组柱状图、趋势折线图、相关性、AI 洞察/报告、CSV 导出 |
 | 论文整理 | 文献 CRUD、主题与状态筛选、笔记与评分、BibTeX 导入、BibTeX/RIS/APA 导出、AI 综述 |
@@ -34,8 +34,9 @@ npm run smoke       # 端到端接口冒烟测试（需先启动服务）
 | 智能邮箱 | IMAP 收件同步（幂等）、SMTP 发送、演示模式降级、AI 摘要/回复/起草、账户加密存储 |
 | 自动化任务 | 手动/定时触发、7 种真实办公动作、运行记录与结果查看、每分钟轻量调度器 |
 | 技能专家连接器 | 内置模型/邮箱/存储状态、自定义 Webhook/API 连接器、连通性测试、Token 加密存储 |
+| 平台与协作 | 多账号（安装管理员建号）、工作区与角色、文档分享/评论/版本快照与恢复、附件、事件与工作流、审计与用量、MCP；外部系统用**工作区 API Key** 调 `/webhook/:key` 与 `/mcp` |
 
-**导航结构**：浅色侧栏常驻「智能邮箱、自动化任务、技能专家连接器」三项与最近任务列表；首页为对话式排版（大标题、快捷标签、4 张任务卡、大输入框与「全部应用」宫格），文档协作、数据分析、论文整理、科学研究、设置等应用统一从首页进入，详情页顶部提供返回工作台入口。
+**导航结构**：侧栏只有「新建任务」、四个应用（智能邮箱、自动化任务、技能专家连接器、智能体工作台）与可折叠的最近任务；设置、活动、外观（浅色/深色/系统）、日志打包、检查更新、退出登录都在左下角头像菜单里。文档协作、数据分析、论文整理、科学研究目前只保留页面本身（`#/documents` 等直达），不再占导航位。
 
 ## 架构决策
 
@@ -65,7 +66,7 @@ npm run smoke       # 端到端接口冒烟测试（需先启动服务）
 
 ```
 /health  /ready
-/api/auth/{login,logout,me}
+/api/auth/{login,logout,me}  /api/auth/users（安装管理员）
 /api/dashboard  /api/dashboard/activity
 /api/documents  /api/documents/templates  /:id/{ai,export}
 /api/analytics/datasets  /:id/{insights,export}
@@ -75,8 +76,11 @@ npm run smoke       # 端到端接口冒烟测试（需先启动服务）
 /api/automation/{actions,tasks}  /:id/run
 /api/connectors  /:id/test
 /api/agent/{status,generate,run(SSE)}
+/api/platform/{status,tools,knowledge,conversations,chat(SSE),runs}
+/api/platform/{workspaces,agents,shares,comments,versions,files,events,workflows,audit,usage,mcp}
+/api/platform/workspaces/:id/{members,keys}  /api/platform/webhook/:key（X-Api-Key）
 ```
 
 ## 边界与后续
 
-单用户本地版；CSV 单次最多 5000 行；离线引擎是规则模板，风格改写能力弱于真实模型；AI 结论只使用你提供的材料。生产化建议：配置 `APP_SECRET` 与 HTTPS、迁移到 PostgreSQL、增加模型调用配额与审计、为邮件同步引入后台队列。
+单机部署，可以多账号（安装管理员建号、工作区与角色控制可见范围），但没有邀请/注册/审批等组织流程；CSV 单次最多 5000 行；离线引擎是规则模板，风格改写能力弱于真实模型；AI 结论只使用你提供的材料；`AI_DAILY_LIMIT` 只统计平台会话的模型调用，不是全站预算。生产化建议：配置 `APP_SECRET` 与 HTTPS、迁移到 PostgreSQL、把配额与审计扩到全站 AI 调用、为邮件同步引入后台队列。

@@ -41,7 +41,7 @@ export function Settings({ user, aiMode, onLogout, onChanged }: { user: User; ai
 
       <div className="settings-grid">
         <section className="card card-pad">
-          <div className="row mb-16"><div className="stat-icon" style={{ color: '#5b6cff', background: '#eef0ff', margin: 0 }}><Icon name="sparkles" size={17} /></div>
+          <div className="row mb-16"><div className="stat-icon" style={{ color: 'var(--primary)', background: 'var(--primary-soft)', margin: 0 }}><Icon name="sparkles" size={17} /></div>
             <div><h3>AI 模型</h3><div className="text-xs muted">当前生成引擎</div></div></div>
           {ai.loading && !ai.data ? <Skeleton height={110} /> : (
             <>
@@ -57,7 +57,7 @@ export function Settings({ user, aiMode, onLogout, onChanged }: { user: User; ai
         </section>
 
         <section className="card card-pad">
-          <div className="row mb-16"><div className="stat-icon" style={{ color: '#ef6c83', background: '#ffedf1', margin: 0 }}><Icon name="mail" size={17} /></div>
+          <div className="row mb-16"><div className="stat-icon" style={{ color: 'var(--danger)', background: 'var(--danger-soft)', margin: 0 }}><Icon name="mail" size={17} /></div>
             <div><h3>邮箱账户</h3><div className="text-xs muted">IMAP 收件 / SMTP 发送</div></div></div>
           {mail.loading && !mail.data ? <Skeleton height={90} /> : (
             <>
@@ -77,7 +77,7 @@ export function Settings({ user, aiMode, onLogout, onChanged }: { user: User; ai
         </section>
 
         <section className="card card-pad">
-          <div className="row mb-16"><div className="stat-icon" style={{ color: '#13bfa2', background: '#e4f9f4', margin: 0 }}><Icon name="shield" size={17} /></div>
+          <div className="row mb-16"><div className="stat-icon" style={{ color: 'var(--accent)', background: 'var(--accent-soft)', margin: 0 }}><Icon name="shield" size={17} /></div>
             <div><h3>本机账号与数据</h3><div className="text-xs muted">单用户本地工作区</div></div></div>
           <div className="info-row"><span className="label">当前账号</span><strong>{user.username}</strong></div>
           <div className="info-row"><span className="label">会话方式</span><span>httpOnly Cookie + HMAC 签名</span></div>
@@ -87,7 +87,7 @@ export function Settings({ user, aiMode, onLogout, onChanged }: { user: User; ai
         </section>
 
         <section className="card card-pad">
-          <div className="row mb-16"><div className="stat-icon" style={{ color: '#f3a43a', background: '#fff3df', margin: 0 }}><Icon name="bolt" size={17} /></div>
+          <div className="row mb-16"><div className="stat-icon" style={{ color: 'var(--warn)', background: 'var(--warn-soft)', margin: 0 }}><Icon name="bolt" size={17} /></div>
             <div><h3>能力与边界</h3><div className="text-xs muted">避免把演示当成生产</div></div></div>
           <div className="settings-note">
             <p className="mb-12">已实现：文档 CRUD 与 AI 写作、CSV 统计与图表、文献库与引用导出、实验与任务看板、IMAP/SMTP 邮件收发、统一智能体与 SSE 流式输出。</p>

@@ -4,6 +4,11 @@ import type { AuthenticatedRequest } from '../../shared/http.ts';
 import { authService, SESSION_COOKIE } from './auth.service.ts';
 
 export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  // 已经有人认证过（`platform.auth.ts` 的入站 API Key）：不要再要求会话。
+  if (req.userId) {
+    next();
+    return;
+  }
   try {
     const user = authService.resolve(req.cookies?.[SESSION_COOKIE]);
     req.userId = user.id;

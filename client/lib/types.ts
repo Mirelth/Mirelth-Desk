@@ -166,5 +166,65 @@ export interface KnowledgeHit {
   id: string; title: string; content: string; sourceType: string; sourceId: string; score: number;
 }
 
+export interface PlatformWorkspace {
+  id: string; name: string; role: string; createdAt: string; memberCount: number;
+}
+
+export interface PlatformMember {
+  userId: string; username: string; role: string; createdAt: string;
+}
+
+export interface PlatformApiKey {
+  id: string; name: string; prefix: string; role: string;
+  createdAt: string; lastUsedAt: string | null; revokedAt: string | null;
+}
+
+export interface PlatformAgent {
+  id: string; name: string; description: string; system_prompt: string; model: string;
+  max_steps: number; tools: string[]; created_at: string;
+}
+
+export interface PlatformShare {
+  id: string; document_id: string; user_id: string; permission: string; created_at: string;
+}
+
+export interface PlatformComment {
+  id: string; user_id: string; username: string; content: string; created_at: string;
+}
+
+export interface PlatformVersion {
+  id: string; document_id: string; user_id: string; title: string; note: string; created_at: string;
+}
+
+export interface PlatformFile {
+  id: string; filename: string; mime: string; size: number; created_at: string;
+}
+
+export interface PlatformEvent {
+  id: string; event_key: string; payload: string; status: string; created_at: string;
+}
+
+export interface PlatformWorkflowNode {
+  id: string; tool: string; args?: Record<string, unknown>;
+}
+
+export interface PlatformWorkflow {
+  id: string; name: string; nodes: PlatformWorkflowNode[];
+  edges: Array<{ from: string; to: string }>; enabled: boolean; created_at: string;
+}
+
+export interface PlatformAuditLog {
+  id: string; user_id: string; action: string; resource: string; detail: string; created_at: string;
+}
+
+export interface PlatformUsage {
+  id: string; model: string; tokens_estimate: number; created_at: string;
+}
+
+/** 安装管理员可见的账号列表（`/api/auth/users`）。 */
+export interface AuthUser {
+  id: string; username: string; createdAt: string;
+}
+
 /** 列表接口的分页信封：`data` 就是它。 */
 export interface Paged<T> { items: T[]; total: number; limit: number; offset: number }

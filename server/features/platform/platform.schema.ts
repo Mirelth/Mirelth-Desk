@@ -36,6 +36,21 @@ export const eventSchema = z.object({
   payload: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const apiKeySchema = z.object({
+  name: z.string().min(1, '请输入名称').max(120),
+  role: z.enum(['viewer', 'member', 'admin']).optional().default('member'),
+});
+
+export const toolSchema = z.object({
+  name: z.string().min(1).max(64),
+  description: z.string().min(1).max(300),
+  webhook: z.string().max(400).refine((value) => /^https?:\/\//i.test(value), 'Webhook 需以 http(s):// 开头').optional(),
+});
+
+export const memberSchema = z.object({ username: z.string().min(1).max(64), role: z.string().min(1).max(20) });
+
+export const versionSchema = z.object({ documentId: z.string().min(1), note: z.string().max(200).optional() });
+
 export const workflowSchema = z.object({
   id: z.string().max(60).optional(), name: z.string().min(1).max(120),
   nodes: z.array(z.object({ id: z.string(), tool: z.string(), args: z.record(z.string(), z.unknown()).optional() })).max(30),

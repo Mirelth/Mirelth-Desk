@@ -1,14 +1,10 @@
 ---
 id: agent-api
 type: module-design
-status: draft
+status: active
 title: 智能体端点 · 无状态的生成与流式接口
 parent: architecture
-depends-on:
-  - shared-kernel
-  - ai-layer
-  - activity
-  - auth
+depends-on: [shared-kernel, ai-layer, activity, auth]
 ---
 
 ## 职责

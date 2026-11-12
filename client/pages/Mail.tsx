@@ -165,7 +165,7 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
       </div>
 
       {!status.loading && !status.data?.configured && (
-        <div className="error-banner" style={{ background: '#fff8e9', color: '#a2701a', borderColor: '#ffe6b8' }}>
+        <div className="error-banner" style={{ background: 'var(--warn-soft)', color: 'var(--warn)', borderColor: 'var(--warn-line)' }}>
           <Icon name="info" size={16} />
           <span>当前为演示模式：展示内置样例邮件，发送仅保存到本地「已发送」。配置 IMAP / SMTP 后即可真实收发。</span>
           <button type="button" onClick={() => { void loadAccounts(); setAccountOpen(true); }}>去配置</button>
@@ -238,7 +238,7 @@ export function Mail({ onChanged }: { onChanged?: () => void }) {
                 </div>
               </div>
               {detail.data.aiSummary && (
-                <div className="card-pad" style={{ background: '#f7f9ff', borderBottom: '1px solid var(--line-soft)' }}>
+                <div className="card-pad" style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--line-soft)' }}>
                   <div className="row mb-12"><Icon name="sparkles" size={15} className="muted" /><strong className="text-sm">已保存的 AI 摘要</strong></div>
                   <MarkdownView source={detail.data.aiSummary} />
                 </div>

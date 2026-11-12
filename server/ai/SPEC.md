@@ -1,11 +1,10 @@
 ---
 id: ai-layer
 type: module-design
-status: draft
+status: active
 title: AI 层 · 双通道生成、任务提示词与离线规则引擎
 parent: architecture
-depends-on:
-  - shared-kernel
+depends-on: [shared-kernel]
 ---
 
 ## 职责
@@ -37,4 +36,4 @@ depends-on:
 - **`document.summarize` 有自己的函数**：曾经直接复用 `mailSummary`，于是文档摘要顶着「## 邮件摘要」与「**发件人**：文档」——现在是独立的 `documentSummarize`（一句话 / 关键要点 / 后续事项）。**不要把两个任务的输出函数再次合并**：它们的字段语义不同（邮件有发件人，文档有标题）。
 - **离线引擎的 13 个生成函数只有 2 个有断言**（大纲、文档摘要）：它是「开箱即用」的承重墙，其余仍只靠 `scripts/smoke.ts` 间接触碰。
 - **`chatWithTools` 与离线引擎不共享工具选择逻辑**：在线由模型决定调哪些工具，离线由 `platform/engine.ts` 里的正则猜（`pickOfflineTools`）。后者住在 platform 而不是这里，位置可疑。
-- **运行模式被重算了四处**：`server/index.ts:20`、`auth.controller.ts:24`、`auth.controller.ts:42`、`activity.service.ts:45` 各自写 `config.llm.enabled ? 'live' : 'offline'`，一律不经 `aiStatus()`。改变模式的判定方式（例如支持多模型配置）时，这四处会静默落后于 provider——与上面 `TaskKind` 的四份副本同一类问题。
+- **运行模式被重算了四处**：`server/index.ts:22`、`auth.controller.ts:24`、`auth.controller.ts:42`、`activity.service.ts:45` 各自写 `config.llm.enabled ? 'live' : 'offline'`，一律不经 `aiStatus()`。改变模式的判定方式（例如支持多模型配置）时，这四处会静默落后于 provider——与上面 `TaskKind` 的四份副本同一类问题。

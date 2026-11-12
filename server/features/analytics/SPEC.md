@@ -1,14 +1,10 @@
 ---
 id: analytics
 type: module-design
-status: draft
+status: active
 title: 数据分析 · CSV 导入、统计与洞察
 parent: architecture
-depends-on:
-  - shared-kernel
-  - ai-layer
-  - activity
-  - auth
+depends-on: [shared-kernel, ai-layer, activity, auth]
 ---
 
 ## 职责
@@ -20,7 +16,7 @@ depends-on:
 - **允许**：`shared/*`、`ai/provider`、`activity`；控制器层另需 `auth` 的 `currentUserId`（只限控制器，service 不碰会话）。
 - **禁止**：`documents`（分析报告不落文档库）、`research`（实验指标与数据集是两套东西）。
 - **被谁调用**：前端页面、`workspace` 的 `analytics.insights` 自动化动作。
-- **目录内的两个纯函数模块**：`csv.ts`（解析与序列化）与 `analytics.stats.ts`（`describe` / `computeStats` / `pearson`）——**零 IO、零依赖**，因此可以直接单元测试，不必经过 `analytics.service.ts`（它会连带打开 SQLite）。
+- **目录内的两个纯函数模块**：`csv.ts`（解析与序列化）与 `analytics.stats.ts`（`describe` / `computeStats` / `pearson`）——**不碰数据库、不依赖服务层**（`csv.ts` 只多引一个 `shared/errors.ts` 的 `BadRequestError`），因此可以直接单元测试，不必经过 `analytics.service.ts`（它会连带打开 SQLite）。
 
 ## CSV 契约（`csv.ts`）
 
@@ -36,7 +32,7 @@ depends-on:
 
 - 列判为 `numeric` 的条件是**非空值里 ≥70% 是数字**；否则 `categorical`（并给出 `unique`）。混合列因此会被当分类列，均值不予计算。
 - 分组与趋势都取**第一个分类列**作标签、**第一个数值列**作取值，没有让用户选列的口子。分组输出均值 + 计数，趋势输出求和；趋势拿不到分类列时退化成「前 24 行按行号」。
-- 相关性是 Pearson，**且只在两列的有效数值个数相等且都 ≥3 时**才计算（`a.length === b.length && a.length >= 3`）；两列有效值分别 4 个与 5 个时这对直接被跳过。输出前 6 对。
+- 相关性是 Pearson，**先按行取交集再算**：只有两列在同一行都取到数值才算一个样本，样本数 ≥3 才对这一对计算；输出前 6 对。
 - 分组最多 12 项、趋势最多 24 点、相关性最多 6 对——都在 `computeStats` 里截断。
 
 ## 关键决定
@@ -50,7 +46,7 @@ depends-on:
 - **缺失值在分组/趋势/相关性里一律跳过**：`numericAt` 只认 `typeof value === 'number'`，空单元格与非数字字符串都返回 `undefined`，与列信息里的 `missing` 口径一致。（曾经用 `Number(row[col])`，而 `Number(null) === 0`，于是一个空值会把分组均值拉低。）
 - **相关性按行取交集**：任一列在该行缺失或非数字，整对跳过——不再出现「两列各自过滤、序列错位」的静默错误。代价是可用样本数会变少，`>= 3` 对才计算。
 - **列表分页**：`GET /datasets` 回 `{ items, total, limit, offset }`（默认 20、上限 100）。
-- **没有更新/重命名接口**：只有导入、查看、删除、导出；改名要重新导入。
+- **没有更新/重命名接口**：只有导入、查看、删除、导出，外加一个 `POST /datasets/:id/insights`（AI 洞察/报告，产品 UI 不走它，见上）；改名要重新导入。
 - **导出不能原样回写**：`exportCsv` 用的是导入时已强制转数字的行，所以 `007` 会导出成 `7`、`1,234` 变成 `1234`。带前导零的编码列（学号、订单号）通过一次导入导出就会被改。想保留原字面值需要额外存一份原始文本。
 - **列名重复检测只在导入时做**，导出的 CSV 不再校验。
 - **`describe` 的 `sum/mean/min/max/std` 用 `present` 里的所有值转数字**，与「非空且是数字」的判定不完全一致（例如一个 70% 数字的列里，非数字字符串会被 `Number()` 变成 `NaN` 后被 `filter(Number.isFinite)` 丢掉，但 `missing` 已经把它们算作「有值」）。

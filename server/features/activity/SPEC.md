@@ -1,12 +1,10 @@
 ---
 id: activity
 type: module-design
-status: draft
+status: active
 title: 活动流水与工作台概览
 parent: architecture
-depends-on:
-  - shared-kernel
-  - auth
+depends-on: [shared-kernel, auth]
 ---
 
 ## 职责
@@ -22,7 +20,7 @@ depends-on:
 
 ## 关键决定
 
-- **活动流水用英文动作码 + 中文描述**：`module` 的逻辑枚举值有 7 个，但**实际写进去的很少**——绝大多数写操作记 `module='agent'`（`document_ai`/`analytics_ai`/`paper_ai`/`research_ai`/`mail_ai`/`automation_*`/`connector_*`），而枚举里的 `'system'` **从未被写入**。所以按 `module` 分组时，「智能体」里会混着各模块的 AI 与自动化动作。`action` 是调用方传入的**英文标识符**（`create`/`update`/`delete`/`sync`/`send`/`read`/`document_ai`/`automation_run` 等，没有约束表）；`description` 才是中文句子。三者都是自由字符串，没有类型或白名单。
+- **活动流水用英文动作码 + 中文描述**：`module` 的逻辑枚举值有 7 个，但**实际分布很不均**——42 处 `record` 调用里只有 16 处记 `module='agent'`（`document_ai`/`analytics_ai`/`paper_ai`/`research_ai`/`mail_ai`/`automation_*`/`connector_*`），其余记各自域，2 处记 `'system'`（建号/删号）。所以按 `module` 分组时，「智能体」里会混着各模块的 AI 与自动化动作。`action` 是调用方传入的**英文标识符**（`create`/`update`/`delete`/`sync`/`send`/`read`/`document_ai`/`automation_run` 等，没有约束表）；`description` 才是中文句子。三者都是自由字符串，没有类型或白名单。
 - **概览是跨表聚合而不是物化视图**：`stats()` 一共发 **8 条** `COUNT`，覆盖 **7 张表**（`messages` 占两条），每次请求都现算。数据量在单机单用户下无所谓，但见下面的耦合问题。
 - **计数口径不统一**：`tasks` 只数 `status != 'done'`，`unreadMail` 带 `folder = 'inbox' AND is_read = 0`，其余（documents/datasets/papers/projects/experiments/totalMail）是全量计数。读概览的人容易把 `unreadMail` 当成邮件总量。
 - **AI 状态在这里也有一份**：`stats().ai` 返回 `mode/model/baseUrl`，与 `/api/agent/status` 的内容重叠，且模式是直接读 `config.llm.enabled` 而不是 `aiStatus()`（见 `ai-layer`）。

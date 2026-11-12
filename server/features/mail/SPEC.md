@@ -1,14 +1,10 @@
 ---
 id: mail
 type: module-design
-status: draft
+status: active
 title: 智能邮箱 · IMAP 同步、SMTP 发送与 AI 处理
 parent: architecture
-depends-on:
-  - shared-kernel
-  - ai-layer
-  - activity
-  - auth
+depends-on: [shared-kernel, ai-layer, activity, auth]
 ---
 
 ## 职责
@@ -37,7 +33,7 @@ depends-on:
 ## 已知问题
 
 - **打开邮件会隐式写已读，并留一条流水**：`mailService.get` 发现 `is_read = 0` 就 `markRead` 并记 `mail/read`；`PATCH /messages/:id` 的显式标记同样记。所以读邮件会进「最近动态」。
-- **同步没有超时与退避**：`ImapFlow` 只传了 host/port/auth，未设连接超时；每次 `POST /sync` 限流 10 次/分钟，但没有重试或队列。
+- **同步没有超时与退避**：`ImapFlow` 只传了 host/port/secure/auth/logger（`logger: false` 关掉了它自带的输出），未设连接超时；每次 `POST /sync` 限流 10 次/分钟，但没有重试或队列。
 - **删除远端邮件不会同步删除本地**；账户删除后其邮件仍在（`messages.account_id` 无外键约束，见下）。
 - **`messages` 表对 `account_id` 没有外键**（`001_init.sql` 只给 `user_id` 加了级联），所以删账户留下的是「无主邮件」而不是被级联清掉。
 - **发件方向 `from_addr` 是 `我 <账户邮箱>`**：`insertSent` 的展示文案由调用方传入，`send` 传 `我 <${account.email}>`（无账户时 `我 <演示账户>`），所以按 `from_addr` 做「发出统计」在有账户时是可用的。收件侧分两种：**IMAP 同步来的行**写信封 `To`（缺头才回落 `account.email`），**seed 的演示收件行**写的是 `我 <me@local>` 这类占位——全新安装、没配账户时按 `to_addr` 聚合仍只会得到一个占位地址。

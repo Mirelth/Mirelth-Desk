@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AgentDrawer, type AgentPreset } from './components/AgentDrawer.tsx';
-import { apiClient } from './lib/api.ts';
-import { ToastProvider, Icon, IconButton, Button, type IconName } from './lib/ui.tsx';
+import { AccountMenu } from './components/AccountMenu.tsx';
+import { ActivityDrawer } from './components/ActivityDrawer.tsx';
+import { apiClient, downloadFile, getErrorMessage } from './lib/api.ts';
+import { useTheme } from './lib/theme.ts';
+import { Icon, IconButton, useToast, type IconName } from './lib/ui.tsx';
 import type { AiMode, DashboardStats, PageId, User } from './lib/types.ts';
 import { Login } from './pages/Login.tsx';
 import { Dashboard } from './pages/Dashboard.tsx';
@@ -49,14 +52,21 @@ function pageForActivity(entry: { module: string; action: string }): PageId {
   return MODULE_PAGE[entry.module] ?? 'dashboard';
 }
 
-const NAV: Array<{ id: PageId; label: string; icon: IconName; hint: string }> = [
-  { id: 'mail', label: '智能邮箱', icon: 'mail', hint: '收发与 AI 回复' },
-  { id: 'automation', label: '自动化任务', icon: 'bolt', hint: '定时与手动执行' },
-  { id: 'connectors', label: '技能专家连接器', icon: 'external', hint: '外部能力接入' },
+/**
+ * 侧栏应用入口的唯一真相：侧栏从它渲染，`PageId` 的新增要同时在这里挂一条（首页 `dashboard` 不列，靠点品牌回）。
+ */
+const APP_ENTRIES: Array<{ id: PageId; icon: IconName; hint: string; metric?: 'unreadMail' }> = [
+  { id: 'mail', icon: 'mail', hint: '收发、摘要与回复', metric: 'unreadMail' },
+  { id: 'automation', icon: 'bolt', hint: '定时触发办公动作' },
+  { id: 'connectors', icon: 'external', hint: '模型、邮箱、存储接入' },
+  { id: 'platform', icon: 'headphones', hint: '多轮会话、工具与知识库' },
 ];
 
+interface SystemInfo { version: string; build: string; aiMode: string; env: string }
+
 function readPage(): PageId {
-  const value = window.location.hash.replace(/^#\/?/, '') as PageId;
+  // hash 允许带子页（`#/platform/agents`）：判页面只看第一段。
+  const value = window.location.hash.replace(/^#\/?/, '').split('/')[0] as PageId;
   return Object.prototype.hasOwnProperty.call(PAGE_META, value) ? value : 'dashboard';
 }
 
@@ -65,11 +75,16 @@ export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [aiMode, setAiMode] = useState<AiMode>('offline');
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState('');
   const [agentOpen, setAgentOpen] = useState(false);
   const [preset, setPreset] = useState<AgentPreset | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [recentOpen, setRecentOpen] = useState(true);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const theme = useTheme();
+  const toast = useToast();
 
   useEffect(() => {
     const onHashChange = () => setPage(readPage());
@@ -83,16 +98,37 @@ export function App() {
       .catch(() => setUser(null));
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+    apiClient.get<SystemInfo>('/api/system/info').then(setSystemInfo).catch(() => setSystemInfo(null));
+  }, [user]);
+
+  const downloadLogs = async () => {
+    setAccountOpen(false);
+    try {
+      await downloadFile('/api/system/logs', 'mirelth-desk-logs.txt');
+      toast('诊断日志已开始下载', 'success');
+    } catch (error) {
+      toast(getErrorMessage(error), 'error');
+    }
+  };
+
+  const checkUpdates = () => {
+    setAccountOpen(false);
+    if (!systemInfo) {
+      toast('读不到版本信息，请确认服务在运行', 'error');
+      return;
+    }
+    toast(`当前 v${systemInfo.version}（本地构建），已是最新`, 'success');
+  };
+
   const refreshStats = useCallback(async () => {
     if (!user) return;
-    setStatsLoading(true);
     try {
       setStats(await apiClient.get<DashboardStats>('/api/dashboard'));
       setStatsError('');
     } catch (error) {
       setStatsError(error instanceof Error ? error.message : '统计加载失败');
-    } finally {
-      setStatsLoading(false);
     }
   }, [user]);
 
@@ -124,10 +160,10 @@ export function App() {
   if (!user) return <Login onSuccess={(nextUser, mode) => { setUser(nextUser); setAiMode(mode); }} />;
 
   const meta = PAGE_META[page];
-  const counts: Partial<Record<PageId, number>> = { mail: stats?.unreadMail ?? 0 };
+  const recent = (stats?.recent ?? []).slice(0, 5);
 
   return (
-    <ToastProvider>
+    <>
       <div className="app-shell">
         <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`}>
           <div className="brand-row">
@@ -137,35 +173,52 @@ export function App() {
             </button>
             <IconButton icon="menu" title={collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setCollapsed(!collapsed)} />
           </div>
-          <div className="nav-section">常驻入口 ({NAV.length})</div>
+          <button type="button" className="new-task" onClick={() => openAgent('')} title="打开智能体，开始一个新任务">
+            <Icon name="edit" size={16} />
+            <span>新建任务</span>
+            <span className="new-task-search"><Icon name="search" size={14} /></span>
+          </button>
+          <div className="nav-section">应用 ({APP_ENTRIES.length})</div>
           <nav>
-            {NAV.map((item) => (
-              <button type="button" key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`}
-                onClick={() => navigate(item.id)} title={`${item.label} · ${item.hint}`}>
-                <Icon name={item.icon} size={17} />
-                <span>{item.label}</span>
-                {counts[item.id] ? <span className="nav-count">{counts[item.id]}</span> : null}
-              </button>
-            ))}
+            {APP_ENTRIES.map((item) => {
+              const count = item.metric ? stats?.[item.metric] ?? 0 : 0;
+              return (
+                <button type="button" key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`}
+                  onClick={() => navigate(item.id)} title={`${PAGE_META[item.id].title} · ${item.hint}`}>
+                  <Icon name={item.icon} size={17} />
+                  <span>{PAGE_META[item.id].title}</span>
+                  {count > 0 ? <span className="nav-count">{count}</span> : null}
+                </button>
+              );
+            })}
           </nav>
-          <div className="nav-section">最近任务 ({Math.min(stats?.recent.length ?? 0, 3)})</div>
-          <div className="sidebar-tasks">
-            {(stats?.recent ?? []).slice(0, 3).map((item) => (
-              <button type="button" className="sidebar-task" key={item.id} title={item.description}
-                onClick={() => navigate(pageForActivity(item))}>
-                <span className="dot" /><span>{item.description}</span>
-              </button>
-            ))}
-          </div>
+          <button type="button" className="nav-section is-toggle" onClick={() => setRecentOpen(!recentOpen)}
+            aria-expanded={recentOpen} title={recentOpen ? '收起最近任务' : '展开最近任务'}>
+            最近任务 ({recent.length})
+            <span className={`nav-chevron ${recentOpen ? 'is-open' : ''}`}><Icon name="down" size={12} /></span>
+          </button>
+          {recentOpen && (
+            <div className="sidebar-tasks">
+              {recent.length === 0 && <div className="sidebar-tasks-empty">还没有执行过的任务</div>}
+              {recent.map((item) => (
+                <button type="button" className="sidebar-task" key={item.id} title={item.description}
+                  onClick={() => navigate(pageForActivity(item))}>
+                  <span className="dot" /><span>{item.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="sidebar-foot">
             <div className={`ai-status-chip ${aiMode === 'offline' ? 'offline' : ''}`}>
               <span className="dot" />
               <span>{aiMode === 'offline' ? '离线规则引擎' : '模型已接入'}</span>
             </div>
-            <div className="sidebar-user">
+            <button type="button" className="sidebar-user" onClick={() => setAccountOpen(!accountOpen)}
+              aria-haspopup="menu" aria-expanded={accountOpen} title="账号与外观">
               <span className="avatar">{user.username.slice(0, 1).toUpperCase()}</span>
-              <span>{user.username}</span>
-            </div>
+              <span className="sidebar-user-name">{user.username}</span>
+              <span className="sidebar-user-chevron"><Icon name="down" size={13} /></span>
+            </button>
           </div>
         </aside>
 
@@ -186,14 +239,8 @@ export function App() {
           </header>
 
           <main>
-            {page !== 'dashboard' && !NAV.some((item) => item.id === page) && (
-              <div className="back-bar">
-                <Button variant="ghost" size="sm" icon="dashboard" onClick={() => navigate('dashboard')}>返回工作台</Button>
-                <span>{meta.title} 从首页「应用宫格」进入</span>
-              </div>
-            )}
             {page === 'dashboard' && (
-              <Dashboard stats={stats} loading={statsLoading} error={statsError} reload={() => void refreshStats()}
+              <Dashboard error={statsError} reload={() => void refreshStats()}
                 navigate={navigate} openAgent={openAgent} />
             )}
             {page === 'documents' && <Documents onChanged={refreshStats} />}
@@ -209,6 +256,17 @@ export function App() {
         </div>
       </div>
       <AgentDrawer open={agentOpen} onClose={() => setAgentOpen(false)} preset={preset} stats={stats} />
-    </ToastProvider>
+      <ActivityDrawer open={activityOpen} onClose={() => setActivityOpen(false)} />
+      {accountOpen && (
+        <AccountMenu username={user.username} mode={theme.mode} version={systemInfo?.version ?? ''}
+          onMode={theme.setMode}
+          onActivity={() => { setAccountOpen(false); setActivityOpen(true); }}
+          onSettings={() => { setAccountOpen(false); navigate('settings'); }}
+          onLogs={() => void downloadLogs()}
+          onCheckUpdate={checkUpdates}
+          onLogout={() => { setAccountOpen(false); void logout(); }}
+          onClose={() => setAccountOpen(false)} />
+      )}
+    </>
   );
 }

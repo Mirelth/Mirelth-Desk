@@ -218,9 +218,9 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
           <div className="stack" style={{ gap: 8 }}>
             {templates.data?.map((template) => (
               <button type="button" key={template.id} className={`quick-item ${newTemplate === template.id ? 'active' : ''}`}
-                style={newTemplate === template.id ? { borderColor: '#bcc4ff', background: '#eef0ff' } : undefined}
+                style={newTemplate === template.id ? { borderColor: 'var(--primary)', background: 'var(--primary-soft)' } : undefined}
                 onClick={() => setNewTemplate(template.id)}>
-                <span className="qi-icon" style={{ background: '#fff' }}><span className="muted">#</span></span>
+                <span className="qi-icon"><span className="muted">#</span></span>
                 <span><strong>{template.name}</strong><span>{template.description}</span></span>
               </button>
             ))}
