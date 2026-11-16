@@ -97,6 +97,8 @@ export const config = {
     model: stringValue('LLM_MODEL', 'gpt-4o-mini'),
     /** 语义检索用的嵌入模型；留空则检索降级为词法向量，不影响可用性。 */
     embeddingModel: stringValue('LLM_EMBEDDING_MODEL', ''),
+    /** 图片与扫描件识别用的多模态模型；留空则沿用 LLM_MODEL。 */
+    visionModel: stringValue('LLM_VISION_MODEL', ''),
     get enabled(): boolean {
       return Boolean(this.apiKey);
     },
@@ -113,15 +115,11 @@ export const config = {
     maxSteps: intValue('BROWSER_MAX_STEPS', 12),
     timeoutMs: intValue('BROWSER_TIMEOUT_MS', 30_000),
   },
-  /** OCR 语言包目录；缺包时默认自动下载并缓存到此目录，之后复用本地文件。 */
-  ocr: {
-    langPath: stringValue('OCR_LANG_PATH', '.data/ocr'),
-    langs: stringValue('OCR_LANGS', 'chi_sim+eng'),
-    /** 设为 false 则只用本地包、缺包报错（内网/无外网环境用）。 */
-    autoDownload: stringValue('OCR_AUTO_DOWNLOAD', 'true') !== 'false',
-    /** 本地加载与首次下载的超时上限；防止 worker 静默挂起把请求悬死。 */
-    initTimeoutMs: intValue('OCR_INIT_TIMEOUT_MS', 60_000),
-    downloadTimeoutMs: intValue('OCR_DOWNLOAD_TIMEOUT_MS', 180_000),
+  /** 扫描件识别：逐页转图交多模态模型，页数上限防止一次任务失控。 */
+  vision: {
+    maxPages: intValue('VISION_MAX_PAGES', 10),
+    /** 渲染倍率：2 约等于 144dpi，兼顾清晰度与请求体积。 */
+    scale: Number(stringValue('VISION_RENDER_SCALE', '2')) || 2,
   },
   database: {
     path: path.resolve(ROOT, stringValue('DATABASE_PATH', '.data/mirelth.db')),

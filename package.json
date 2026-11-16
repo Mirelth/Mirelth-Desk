@@ -18,6 +18,7 @@
     "smoke": "node scripts/smoke.ts"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.1.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "docx": "^9.15.4",
@@ -32,7 +33,6 @@
     "pptxgenjs": "^4.0.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "tesseract.js": "^7.0.0",
     "zod": "^4.1.0"
   },
   "overrides": {

@@ -6,12 +6,23 @@ import { exportHtml } from '../../shared/markdown.ts';
 import {
   OFFICE_MIME, decodeBase64File, deckToPptx, docxToMarkdown, markdownToDeck, markdownToDocx, parseDeckJson,
 } from '../../shared/office.ts';
-import { pdfToMarkdown } from '../../shared/pdf.ts';
-import { recognizeImage } from '../../shared/ocr.ts';
+import { pdfPageCount, pdfToMarkdown, renderPdfPages } from '../../shared/pdf.ts';
+import { visionTranscribe, visionModelName } from '../../ai/provider.ts';
+import { config } from '../../shared/config.ts';
 import { activityService } from '../activity/activity.service.ts';
 import { indexChunk, removeSource } from '../platform/rag.ts';
 import { defaultWorkspace } from '../platform/store.ts';
 import { documentsRepository, type DocumentRow } from './documents.repository.ts';
+
+/** 按扩展名推断图片 MIME，供多模态接口的 data URL 使用。 */
+function mimeOfImage(filename: string): string {
+  const ext = filename.toLowerCase().match(/\.([a-z]+)$/)?.[1] ?? 'png';
+  const map: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    bmp: 'image/bmp', webp: 'image/webp', gif: 'image/gif',
+  };
+  return map[ext] ?? 'image/png';
+}
 
 /** 增量索引：文档改动后立即刷新自己的检索块，不必等用户手动重建。失败不影响主流程。 */
 function reindexDoc(userId: string, id: string, title: string, content: string): void {
@@ -166,29 +177,52 @@ export const documentsService = {
     const buffer = decodeBase64File(input.contentBase64, 'PDF 文件');
     const { markdown, pages, needsOcr } = await pdfToMarkdown(buffer);
     const title = input.filename.replace(/\.pdf$/i, '').slice(0, 200) || '导入的 PDF';
-    if (needsOcr) {
-      throw new BadRequestError(
-        `该 PDF（${pages} 页）没有可提取的文本层，可能是扫描件。请先转成图片再用图片导入走 OCR 识别`,
-      );
+
+    // 有文本层：直接用，不花模型钱。
+    if (!needsOcr) {
+      if (markdown.length > 200_000) throw new BadRequestError('导入内容超过 20 万字符上限，请拆分文档');
+      const doc = this.create(userId, { title, content: markdown, kind: 'general' });
+      return { ...doc, pages };
     }
-    if (markdown.length > 200_000) throw new BadRequestError('导入内容超过 20 万字符上限，请拆分文档');
-    const doc = this.create(userId, { title, content: markdown, kind: 'general' });
-    return { ...doc, pages };
+
+    // 扫描件：逐页转图交多模态模型识别。
+    const total = await pdfPageCount(buffer);
+    const limit = config.vision.maxPages;
+    const rendered = await renderPdfPages(buffer, limit);
+    const { text, model } = await visionTranscribe(
+      rendered.map((page) => ({ base64: page.base64, mime: page.mime })),
+      `这是同一份扫描件的第 ${rendered.map((p) => p.page).join('、')} 页，请按页顺序转录，每页前加「## 第 N 页」。`,
+    );
+    const truncated = total > limit
+      ? `\n\n> 注意：原文件共 ${total} 页，本次仅识别前 ${limit} 页（上限由 VISION_MAX_PAGES 控制）。`
+      : '';
+    const content = [
+      `# ${title}`, '',
+      `> 来源：扫描件识别（${input.filename}）｜模型 ${model}｜机器识别结果，请人工核对后再引用。${truncated}`, '',
+      text,
+    ].join('\n');
+    const doc = this.create(userId, { title, content, kind: 'general' });
+    activityService.record(userId, 'agent', 'vision_pdf', `识别扫描件「${title}」（${rendered.length}/${total} 页）`);
+    return { ...doc, pages: total, recognizedPages: rendered.length };
   },
 
-  /** 图片 → OCR → 文档。识别结果标注来源与置信度，遵守「不编造」原则。 */
+  /** 图片 → 多模态模型 → 文档。识别结果标注模型来源，遵守「不编造」原则。 */
   async importImage(userId: string, input: { filename: string; contentBase64: string }) {
-    // 语言包缺失时由 ocr 层自动下载并缓存（OCR_AUTO_DOWNLOAD=false 时才报错）。
     const buffer = decodeBase64File(input.contentBase64, '图片文件');
-    const { text, confidence } = await recognizeImage(buffer);
-    if (!text) throw new BadRequestError('没有识别到文字，请确认图片清晰且包含文本');
+    const mime = mimeOfImage(input.filename);
+    const { text, model } = await visionTranscribe([{ base64: buffer.toString('base64'), mime }]);
+    if (/^（图片中无可识别文字）$/.test(text.trim())) {
+      throw new BadRequestError('模型未在图片中识别到文字，请确认图片清晰且包含文本');
+    }
     const title = input.filename.replace(/\.[^.]+$/, '').slice(0, 200) || '识别的图片';
     const content = [
       `# ${title}`, '',
-      `> 来源：OCR 识别（${input.filename}）｜置信度 ${confidence}%｜机器识别结果，请人工核对后再引用。`, '',
+      `> 来源：图片识别（${input.filename}）｜模型 ${model}｜机器识别结果，请人工核对后再引用。`, '',
       text,
     ].join('\n');
-    return this.create(userId, { title, content, kind: 'general' });
+    const doc = this.create(userId, { title, content, kind: 'general' });
+    activityService.record(userId, 'agent', 'vision_image', `识别图片「${title}」`);
+    return doc;
   },
 
   /** AI Office：文档 → 演示文稿。模型输出 JSON 大纲，解析失败或离线时按文档标题结构切分兜底。 */

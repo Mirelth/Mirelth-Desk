@@ -19,7 +19,7 @@ const { closeDatabase, migrate } = await import('../server/shared/database.ts');
 const { authService } = await import('../server/features/auth/auth.service.ts');
 const { splitChunks, tokenize, encodeVector, decodeVector, dotSimilarity, searchHybrid, indexChunk } = await import('../server/features/platform/rag.ts');
 const { markdownToDeck, parseDeckJson, deckToPptx } = await import('../server/shared/office.ts');
-const { ocrStatus } = await import('../server/shared/ocr.ts');
+
 
 migrate();
 authService.ensureAdmin();
@@ -40,17 +40,10 @@ before(async () => {
   workspaceId = status.data.workspace.id;
 });
 
-after(async () => {
-  const { closeOcr } = await import('../server/shared/ocr.ts');
-  await closeOcr();
+after(() => {
   server.close();
   closeDatabase();
   for (const suffix of ['', '-wal', '-shm']) rmSync(`.data/regression-roadmap.db${suffix}`, { force: true });
-  // 不能在 after 里直接 process.exit：那会截断尚未上报的用例结果。
-  // 改为解除 event loop 的保持——若 OCR 残留 socket 仍吊着进程，
-  // 由下面这个 unref 定时器在所有结果上报后兜底退出。
-  const bail = setTimeout(() => process.exit(process.exitCode ?? 0), 3000);
-  bail.unref();
 });
 
 const get = (path: string) => fetch(`${base}${path}`, { headers: { Cookie: cookie } });
@@ -262,55 +255,53 @@ test('导入：坏 PDF 被拒绝而不是静默成功', async () => {
   assert.equal(response.status, 400);
 });
 
-test('OCR：默认允许自动下载语言包，缺包不再直接拒绝', () => {
-  const status = ocrStatus();
-  assert.equal(status.autoDownload, true, '默认应允许自动下载');
-  assert.ok(status.langPath.length > 0, '应报告语言包目录');
-  if (!status.ready) {
-    assert.equal(status.willDownload, true, '缺包且允许下载时应标记将下载');
-    assert.ok(status.missing.length > 0, '应列出缺失语种');
-  } else {
-    assert.equal(status.willDownload, false, '本地齐备时不应触发下载');
-  }
-  // 不在此发起真实识别：那会下载数十 MB 语言包。下载链路单独用 verify 脚本实测。
-});
-
-test('OCR：下载失败必须在超时内返回可读错误，不得挂死或崩进程', async () => {
-  const status = ocrStatus();
-  if (status.ready) return; // 本地已有语言包，不走下载路径
-
-  // 用极短超时触发失败路径：验证「一定落定 + 中文可操作提示 + 进程存活」。
+test('视觉识别：未配模型时图片导入给出可操作提示，且不崩服务', async () => {
   const { config } = await import('../server/shared/config.ts');
-  const original = config.ocr.downloadTimeoutMs;
-  (config.ocr as { downloadTimeoutMs: number }).downloadTimeoutMs = 1500;
-  try {
-    const started = Date.now();
-    const response = await post('/api/documents/import', {
-      filename: 'scan.png',
-      contentBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
-    });
-    const elapsed = Date.now() - started;
-    assert.equal(response.status, 400, '应返回可读错误而不是挂起');
-    assert.ok(elapsed < 30_000, `应在超时内落定，实际 ${elapsed}ms`);
-    const body = await response.json() as { detail: string };
-    assert.ok(/语言包/.test(body.detail), '提示应说明语言包问题');
-    assert.ok(/检查网络|traineddata/.test(body.detail), '提示应给出可操作的下一步');
-  } finally {
-    (config.ocr as { downloadTimeoutMs: number }).downloadTimeoutMs = original;
-  }
-  // 进程仍存活即证明未崩溃（此前的缺陷会直接 crash）。
+  if (config.llm.enabled) return; // 已配密钥的环境会真的调模型，跳过
+
+  const started = Date.now();
+  const response = await post('/api/documents/import', {
+    filename: 'scan.png',
+    contentBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+  });
+  const elapsed = Date.now() - started;
+  assert.ok(response.status >= 400 && response.status < 600, '应返回错误而不是静默成功');
+  assert.ok(elapsed < 30_000, `应快速落定，实际 ${elapsed}ms`);
+  const body = await response.json() as { detail: string };
+  assert.ok(/多模态|LLM_API_KEY|LLM_VISION_MODEL/.test(body.detail), '提示应指向配置多模态模型');
+  // 服务仍存活即证明识别失败不会带崩进程。
   assert.equal((await get('/api/platform/status')).status, 200, '识别失败后服务应仍可用');
 });
 
-test('OCR：坏图片被拒绝且给出中文提示（不触网）', async () => {
-  const status = ocrStatus();
-  // 本地无语言包时，识别会触发下载；此用例只在已具备语言包时跑真实解码路径。
-  if (!status.ready) return;
-  const response = await post('/api/documents/import', {
-    filename: 'not-an-image.png',
-    contentBase64: Buffer.from('这显然不是图片数据').toString('base64'),
-  });
-  assert.equal(response.status, 400);
-  const body = await response.json() as { detail: string };
-  assert.ok(/识别失败|初始化失败/.test(body.detail), '应给出可读的中文失败提示');
+test('视觉识别：PDF 渲染为图片可用（扫描件链路的基础）', async () => {
+  const { renderPdfPages } = await import('../server/shared/pdf.ts');
+  // 用 office.test 里同样的极简 PDF 构造法：有内容即可验证渲染管线。
+  const text = 'Render check';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${text.length + 44} >>\nstream\nBT /F1 18 Tf 20 100 Td (${text}) Tj ET\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((body, index) => { offsets.push(pdf.length); pdf += `${index + 1} 0 obj\n${body}\nendobj\n`; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+
+  const pages = await renderPdfPages(Buffer.from(pdf, 'latin1'), 2);
+  assert.equal(pages.length, 1, '应渲染出 1 页');
+  assert.equal(pages[0].mime, 'image/png');
+  const png = Buffer.from(pages[0].base64, 'base64');
+  assert.equal(png[0], 0x89, '应是合法 PNG');
+  assert.ok(png.length > 500, '渲染结果不应是空图');
+});
+
+test('视觉识别：页数上限受配置约束', async () => {
+  const { config } = await import('../server/shared/config.ts');
+  assert.ok(config.vision.maxPages >= 1, '应有页数上限');
+  assert.ok(config.vision.scale > 0, '渲染倍率应为正数');
 });

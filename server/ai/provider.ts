@@ -2,7 +2,7 @@ import { config } from '../shared/config.ts';
 import { UpstreamError } from '../shared/errors.ts';
 import { logger } from '../shared/logger.ts';
 import { offlineGenerate } from './offline.ts';
-import { buildMessages, type AiInput, type TaskKind, TASK_LABELS } from './prompts.ts';
+import { buildMessages, type AiInput, type TaskKind, TASK_LABELS, TASK_PROMPTS } from './prompts.ts';
 
 export type AiMode = 'live' | 'offline';
 
@@ -126,6 +126,69 @@ export async function embed(texts: string[]): Promise<number[][] | null> {
 
 export function embeddingModelName(): string {
   return config.llm.embeddingEnabled ? config.llm.embeddingModel : '';
+}
+
+/**
+ * 视觉识别的唯一出口：把图片交给多模态模型转录为 Markdown。
+ * 走 OpenAI 兼容的 content 数组 + image_url（data URL）格式，绝大多数兼容网关都支持。
+ *
+ * 与 embed 不同，这里**未配置模型时直接抛错**而不是静默降级：
+ * 图片识别没有可用的离线替代，静默返回空会让用户以为图片里没字。
+ */
+export async function visionTranscribe(
+  images: Array<{ base64: string; mime: string }>,
+  hint = '',
+): Promise<{ text: string; model: string }> {
+  if (!config.llm.enabled) {
+    throw new UpstreamError('图片与扫描件识别需要配置多模态模型：请在 .env 设置 LLM_API_KEY 与 LLM_VISION_MODEL', 400);
+  }
+  if (!images.length) throw new UpstreamError('没有可识别的图片', 400);
+
+  const model = config.llm.visionModel || config.llm.model;
+  const content: Array<Record<string, unknown>> = [
+    { type: 'text', text: `${TASK_PROMPTS['document.vision']}${hint ? `\n\n补充说明：${hint}` : ''}` },
+    ...images.map((image) => ({
+      type: 'image_url',
+      image_url: { url: `data:${image.mime};base64,${image.base64}` },
+    })),
+  ];
+
+  const response = await fetch(`${config.llm.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.llm.apiKey}` },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: BASE_PROMPT_FOR_VISION },
+        { role: 'user', content },
+      ],
+      temperature: 0,
+      stream: false,
+    }),
+    signal: AbortSignal.timeout(180_000),
+  });
+
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300);
+    // 模型不支持图片时给出可操作的提示，而不是把网关原文丢给用户。
+    if (/image|vision|multimodal|content.*type|invalid/i.test(detail) && response.status >= 400 && response.status < 500) {
+      throw new UpstreamError(`模型 ${model} 似乎不支持图片输入（${response.status}）。请把 LLM_VISION_MODEL 换成多模态模型，如 gpt-4o、qwen-vl-max、glm-4v`, 502);
+    }
+    throw new UpstreamError(`视觉识别失败，模型服务返回 ${response.status}：${detail}`, 502);
+  }
+
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const text = (payload.choices?.[0]?.message?.content ?? '').trim();
+  if (!text) throw new UpstreamError('模型没有返回识别结果，请重试或更换模型', 502);
+  logger.info('ai.vision_transcribed', { model, images: images.length, chars: text.length });
+  return { text, model };
+}
+
+const BASE_PROMPT_FOR_VISION = '你是文档转录助手。只转录图片中真实存在的文字与表格，用简体中文输出 Markdown。不编造、不补写、不解说；辨认不清的地方明确标注。';
+
+export function visionModelName(): string {
+  if (!config.llm.enabled) return '';
+  return config.llm.visionModel || config.llm.model;
 }
 
 export interface PlatformMessage {
