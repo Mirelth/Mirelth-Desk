@@ -15,6 +15,7 @@ interface PptxSlide {
   addText(text: unknown, options?: Record<string, unknown>): PptxSlide;
   addShape(shapeName: string, options?: Record<string, unknown>): PptxSlide;
   addTable(rows: unknown[], options?: Record<string, unknown>): PptxSlide;
+  addImage(options: Record<string, unknown>): PptxSlide;
 }
 interface PptxInstance {
   layout: string; author: string; title: string;
@@ -259,8 +260,34 @@ export async function docxToMarkdown(buffer: Buffer): Promise<{ markdown: string
 
 // ---------------------------------------------------------------- Markdown → 幻灯片大纲
 
-/** 版式：要点页（默认）、分节页、双栏对比、表格页。缺省一律按要点页渲染，向后兼容。 */
-export type SlideLayout = 'bullets' | 'section' | 'twoColumn' | 'table';
+/**
+ * 版式库。前四种是既有版式，保持不变以兼容历史大纲；后五种是本次新增。
+ * 缺省或无法识别的版式一律按要点页渲染——宁可退化成朴素页，也不出空白页。
+ */
+export type SlideLayout =
+  | 'bullets' | 'section' | 'twoColumn' | 'table'
+  | 'quote' | 'metrics' | 'timeline' | 'chart' | 'closing';
+
+export const SLIDE_LAYOUTS: SlideLayout[] = [
+  'bullets', 'section', 'twoColumn', 'table', 'quote', 'metrics', 'timeline', 'chart', 'closing',
+];
+
+/** 版式的中文名与适用场景，供界面选择与提示词使用（单一事实来源）。 */
+export const LAYOUT_LABELS: Record<SlideLayout, string> = {
+  bullets: '要点页',
+  section: '分节页',
+  twoColumn: '双栏对比',
+  table: '表格页',
+  quote: '引述页',
+  metrics: '指标卡',
+  timeline: '时间线',
+  chart: '图表页',
+  closing: '结束页',
+};
+
+export interface DeckMetric { label: string; value: string; note?: string }
+export interface DeckTimelineItem { label: string; text: string }
+export interface DeckChart { labels: string[]; values: number[]; caption?: string }
 
 export interface DeckSlide {
   title: string;
@@ -270,22 +297,128 @@ export interface DeckSlide {
   table?: string[][];
   /** 双栏页的左右两列要点。 */
   columns?: [string[], string[]];
+  /** 引述页：引文与出处。出处可空，但引文必须有。 */
+  quote?: { text: string; attribution?: string };
+  /** 指标卡：2–4 个关键数字。**只放材料里真实存在的数字，不得编造。** */
+  metrics?: DeckMetric[];
+  /** 时间线：按顺序的里程碑。 */
+  timeline?: DeckTimelineItem[];
+  /** 图表页：柱状图数据，取自真实统计。 */
+  chart?: DeckChart;
 }
 
-export interface SlideDeck { title: string; slides: DeckSlide[]; theme?: DeckTheme }
+/**
+ * 品牌套件：把「谁的演示文稿」与「用什么配色」分开。
+ * 主题决定色板，品牌决定字体、Logo、页脚与封面副标题——同一套品牌可配不同主题。
+ */
+export interface BrandKit {
+  /** 组织名，出现在封面与页脚。 */
+  organization?: string;
+  /** 封面副标题；留空则用默认生成说明。 */
+  tagline?: string;
+  /** 页脚文案；留空则用组织名，再留空用默认。 */
+  footer?: string;
+  /** 字体族名。留空用默认中文字体。 */
+  fontFace?: string;
+  /** 品牌主色（6 位 hex，无 #）：覆盖主题的封面色与强调色。 */
+  primaryColor?: string;
+  /** 品牌强调色（6 位 hex，无 #）。 */
+  accentColor?: string;
+  /** Logo 图片的 data URI（`data:image/png;base64,...`）。由调用方读文件后传入。 */
+  logoDataUri?: string;
+}
 
-export type DeckTheme = 'ocean' | 'forest' | 'slate';
+export interface SlideDeck {
+  title: string;
+  slides: DeckSlide[];
+  theme?: DeckTheme;
+  brand?: BrandKit;
+}
 
-interface ThemeTokens { cover: string; accent: string; heading: string; body: string; muted: string }
+export type DeckTheme = 'ocean' | 'forest' | 'slate' | 'crimson' | 'violet' | 'sand' | 'mono';
+
+export const DECK_THEMES: DeckTheme[] = ['ocean', 'forest', 'slate', 'crimson', 'violet', 'sand', 'mono'];
+
+export const THEME_LABELS: Record<DeckTheme, string> = {
+  ocean: '深海蓝', forest: '森林绿', slate: '石板灰',
+  crimson: '绛红', violet: '紫罗兰', sand: '暖砂', mono: '极简黑白',
+};
+
+interface ThemeTokens {
+  cover: string; accent: string; heading: string; body: string; muted: string;
+  /** 浅底色：卡片/表格隔行用，需与 body 有足够对比。 */
+  surface: string;
+  /** 深底上的次要文字色（封面副标题、分节页说明）。 */
+  onCover: string;
+}
 
 const THEMES: Record<DeckTheme, ThemeTokens> = {
-  ocean: { cover: '1F3A5F', accent: '3B82F6', heading: '1F3A5F', body: '333333', muted: '999999' },
-  forest: { cover: '14532D', accent: '22C55E', heading: '14532D', body: '2F3A33', muted: '8A9A90' },
-  slate: { cover: '1E293B', accent: '64748B', heading: '1E293B', body: '334155', muted: '94A3B8' },
+  ocean: { cover: '1F3A5F', accent: '3B82F6', heading: '1F3A5F', body: '333333', muted: '999999', surface: 'F5F7FA', onCover: 'D8E2EF' },
+  forest: { cover: '14532D', accent: '22C55E', heading: '14532D', body: '2F3A33', muted: '8A9A90', surface: 'F2F7F3', onCover: 'D6E9DC' },
+  slate: { cover: '1E293B', accent: '64748B', heading: '1E293B', body: '334155', muted: '94A3B8', surface: 'F4F6F8', onCover: 'DCE3EB' },
+  crimson: { cover: '7F1D1D', accent: 'EF4444', heading: '7F1D1D', body: '3A2E2E', muted: 'A08C8C', surface: 'FBF4F4', onCover: 'F0D9D9' },
+  violet: { cover: '4C1D95', accent: '8B5CF6', heading: '4C1D95', body: '332F3D', muted: '9A93A8', surface: 'F6F4FB', onCover: 'E2DAF3' },
+  sand: { cover: '78350F', accent: 'F59E0B', heading: '78350F', body: '3D3428', muted: 'A2937C', surface: 'FBF7F0', onCover: 'F0E3CE' },
+  mono: { cover: '111111', accent: '555555', heading: '111111', body: '222222', muted: '888888', surface: 'F5F5F5', onCover: 'DDDDDD' },
 };
 
 const MAX_BULLETS = 6;
 const MAX_BULLET_LEN = 110;
+const MAX_METRICS = 4;
+const MAX_TIMELINE = 5;
+const MAX_CHART_POINTS = 8;
+
+/** 只接受 6 位 hex（不带 #）：品牌色来自用户输入，必须校验后再进 XML。 */
+export function normalizeHexColor(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value.trim().replace(/^#/, '');
+  return /^[0-9a-fA-F]{6}$/.test(cleaned) ? cleaned.toUpperCase() : undefined;
+}
+
+/** 品牌套件收敛：颜色校验、文本截断、Logo 只接受 png/jpeg 的 data URI。 */
+export function normalizeBrand(input: unknown): BrandKit | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const raw = input as Record<string, unknown>;
+  const text = (value: unknown, max: number): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, max) : undefined;
+  };
+  const logo = typeof raw.logoDataUri === 'string' && /^data:image\/(png|jpe?g);base64,[A-Za-z0-9+/=]+$/.test(raw.logoDataUri)
+    ? raw.logoDataUri : undefined;
+  const brand: BrandKit = {
+    ...(text(raw.organization, 60) ? { organization: text(raw.organization, 60) } : {}),
+    ...(text(raw.tagline, 120) ? { tagline: text(raw.tagline, 120) } : {}),
+    ...(text(raw.footer, 80) ? { footer: text(raw.footer, 80) } : {}),
+    ...(text(raw.fontFace, 60) ? { fontFace: text(raw.fontFace, 60) } : {}),
+    ...(normalizeHexColor(raw.primaryColor) ? { primaryColor: normalizeHexColor(raw.primaryColor) } : {}),
+    ...(normalizeHexColor(raw.accentColor) ? { accentColor: normalizeHexColor(raw.accentColor) } : {}),
+    ...(logo ? { logoDataUri: logo } : {}),
+  };
+  return Object.keys(brand).length ? brand : undefined;
+}
+
+/** 主题 + 品牌 → 最终令牌。品牌色覆盖主题色，其余沿用主题。 */
+export function resolveTokens(theme: DeckTheme | undefined, brand?: BrandKit): ThemeTokens {
+  const base = THEMES[theme ?? 'ocean'] ?? THEMES.ocean;
+  if (!brand) return base;
+  return {
+    ...base,
+    ...(brand.primaryColor ? { cover: brand.primaryColor, heading: brand.primaryColor } : {}),
+    ...(brand.accentColor ? { accent: brand.accentColor } : {}),
+  };
+}
+
+/** 供界面与提示词使用的模板库清单（单一事实来源，避免前后端各写一份）。 */
+export function deckCatalog(): {
+  layouts: Array<{ value: SlideLayout; label: string }>;
+  themes: Array<{ value: DeckTheme; label: string; cover: string; accent: string }>;
+} {
+  return {
+    layouts: SLIDE_LAYOUTS.map((value) => ({ value, label: LAYOUT_LABELS[value] })),
+    themes: DECK_THEMES.map((value) => ({ value, label: THEME_LABELS[value], cover: THEMES[value].cover, accent: THEMES[value].accent })),
+  };
+}
 
 /** 按 H1/H2 切分幻灯片，H3 并入要点；表格自动转表格页，长文档不丢结构。 */
 export function markdownToDeck(title: string, markdown: string): SlideDeck {
@@ -335,14 +468,87 @@ export function markdownToDeck(title: string, markdown: string): SlideDeck {
     flushTable();
     if (/^[-*]\s+/.test(trimmed)) { pushBullet(stripInline(trimmed.replace(/^[-*]\s+/, ''))); continue; }
     if (/^\d+\.\s+/.test(trimmed)) { pushBullet(stripInline(trimmed)); continue; }
-    if (trimmed.startsWith('>')) { pushBullet(stripInline(trimmed.slice(1))); continue; }
+    if (trimmed.startsWith('>')) {
+      // 整页只有一段引文时升格为引述页，比塞进要点更贴合语义。
+      // 用数组末元素而非 current：闭包里的赋值会让 TS 对 current 的收窄失效。
+      const text = stripInline(trimmed.replace(/^>\s?/, ''));
+      const page = slides[slides.length - 1];
+      if (page && !page.bullets.length && !page.table?.length && text.length >= 20) {
+        page.layout = 'quote';
+        page.quote = { text: text.slice(0, 220) };
+      } else {
+        pushBullet(text);
+      }
+      continue;
+    }
     pushBullet(stripInline(trimmed));
   }
   flushTable();
 
-  const usable = slides.filter((slide) => slide.bullets.length || slide.table?.length || slide.title !== '未命名页').slice(0, 20);
+  const usable = slides.filter((slide) => slide.bullets.length || slide.table?.length || slide.quote || slide.title !== '未命名页').slice(0, 20);
   if (!usable.length) usable.push({ title, bullets: ['（文档暂无正文内容）'], layout: 'bullets' });
   return { title, slides: usable, theme: 'ocean' };
+}
+
+function parseQuote(value: unknown): DeckSlide['quote'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { text?: unknown; attribution?: unknown };
+  const text = typeof raw.text === 'string' ? raw.text.trim() : '';
+  if (!text) return undefined;
+  const attribution = typeof raw.attribution === 'string' ? raw.attribution.trim().slice(0, 60) : '';
+  return { text: text.slice(0, 220), ...(attribution ? { attribution } : {}) };
+}
+
+/** 指标必须有 label 与 value；value 保留原文字符串，不做数值推断以免编造。 */
+function parseMetrics(value: unknown): DeckMetric[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: DeckMetric[] = [];
+  for (const entry of value) {
+    if (items.length >= MAX_METRICS) break;
+    if (!entry || typeof entry !== 'object') continue;
+    const raw = entry as { label?: unknown; value?: unknown; note?: unknown };
+    const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+    const metricValue = typeof raw.value === 'string' ? raw.value.trim()
+      : typeof raw.value === 'number' && Number.isFinite(raw.value) ? String(raw.value) : '';
+    if (!label || !metricValue) continue;
+    const note = typeof raw.note === 'string' ? raw.note.trim().slice(0, 40) : '';
+    items.push({ label: label.slice(0, 24), value: metricValue.slice(0, 16), ...(note ? { note } : {}) });
+  }
+  return items.length ? items : undefined;
+}
+
+function parseTimeline(value: unknown): DeckTimelineItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: DeckTimelineItem[] = [];
+  for (const entry of value) {
+    if (items.length >= MAX_TIMELINE) break;
+    if (!entry || typeof entry !== 'object') continue;
+    const raw = entry as { label?: unknown; text?: unknown };
+    const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+    const text = typeof raw.text === 'string' ? raw.text.trim() : '';
+    if (!label || !text) continue;
+    items.push({ label: label.slice(0, 20), text: text.slice(0, 70) });
+  }
+  return items.length ? items : undefined;
+}
+
+/** 图表数据：labels 与 values 必须等长且为有限数，否则视为无数据。 */
+function parseChart(value: unknown): DeckChart | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { labels?: unknown; values?: unknown; caption?: unknown };
+  if (!Array.isArray(raw.labels) || !Array.isArray(raw.values)) return undefined;
+  const labels = raw.labels.filter((item): item is string => typeof item === 'string').slice(0, MAX_CHART_POINTS);
+  const values = raw.values
+    .map((item) => (typeof item === 'number' ? item : Number(item)))
+    .filter((item) => Number.isFinite(item))
+    .slice(0, MAX_CHART_POINTS);
+  if (!labels.length || labels.length !== values.length) return undefined;
+  const caption = typeof raw.caption === 'string' ? raw.caption.trim().slice(0, 80) : '';
+  return {
+    labels: labels.map((label) => label.slice(0, 16)),
+    values,
+    ...(caption ? { caption } : {}),
+  };
 }
 
 /** 解析模型输出的 JSON 大纲；失败或为空时返回 null，由调用方回退到 Markdown 切分。 */
@@ -352,11 +558,14 @@ export function parseDeckJson(text: string): SlideDeck | null {
   const end = cleaned.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
   try {
-    const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { title?: unknown; slides?: unknown };
+    const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { title?: unknown; slides?: unknown; brand?: unknown };
     if (!Array.isArray(parsed.slides)) return null;
-    const layouts: SlideLayout[] = ['bullets', 'section', 'twoColumn', 'table'];
+    const layouts: SlideLayout[] = SLIDE_LAYOUTS;
     const slides: DeckSlide[] = parsed.slides
-      .filter((item): item is { title: string; bullets?: unknown; layout?: unknown; table?: unknown; columns?: unknown } =>
+      .filter((item): item is {
+        title: string; bullets?: unknown; layout?: unknown; table?: unknown; columns?: unknown;
+        quote?: unknown; metrics?: unknown; timeline?: unknown; chart?: unknown;
+      } =>
         typeof item === 'object' && item !== null && typeof (item as { title?: unknown }).title === 'string')
       .map((item) => {
         const bullets = Array.isArray(item.bullets)
@@ -373,21 +582,32 @@ export function parseDeckJson(text: string): SlideDeck | null {
             (item.columns[1] as unknown[]).filter((v): v is string => typeof v === 'string').slice(0, MAX_BULLETS),
           ] as [string[], string[]]
           : undefined;
+        const quote = parseQuote(item.quote);
+        const metrics = parseMetrics(item.metrics);
+        const timeline = parseTimeline(item.timeline);
+        const chart = parseChart(item.chart);
+        // 声明了某版式但没给对应数据时退回要点页，避免出空白版式。
+        const missing: Partial<Record<SlideLayout, boolean>> = {
+          table: !table?.length, twoColumn: !columns, quote: !quote,
+          metrics: !metrics?.length, timeline: !timeline?.length, chart: !chart,
+        };
         return {
           title: item.title.slice(0, 60),
           bullets,
-          // 声明了表格/双栏但没给数据时退回要点页，避免出空白版式。
-          layout: layout === 'table' && !table?.length ? 'bullets'
-            : layout === 'twoColumn' && !columns ? 'bullets' : layout,
-          table, columns,
+          layout: missing[layout] ? 'bullets' : layout,
+          table, columns, quote, metrics, timeline, chart,
         };
       })
       .filter((slide) => slide.title.trim())
       .slice(0, 20);
     if (!slides.length) return null;
-    const theme = (['ocean', 'forest', 'slate'] as DeckTheme[]).includes((parsed as { theme?: DeckTheme }).theme as DeckTheme)
+    const theme = DECK_THEMES.includes((parsed as { theme?: DeckTheme }).theme as DeckTheme)
       ? (parsed as { theme?: DeckTheme }).theme : 'ocean';
-    return { title: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.slice(0, 100) : '演示文稿', slides, theme };
+    const brand = normalizeBrand(parsed.brand);
+    return {
+      title: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.slice(0, 100) : '演示文稿',
+      slides, theme, ...(brand ? { brand } : {}),
+    };
   } catch {
     return null;
   }
@@ -395,38 +615,65 @@ export function parseDeckJson(text: string): SlideDeck | null {
 
 // ---------------------------------------------------------------- 幻灯片大纲 → PPTX
 
-const FONT_FACE = 'Microsoft YaHei';
+const DEFAULT_FONT = 'Microsoft YaHei';
+const DEFAULT_FOOTER = 'Mirelth Desk · AI Office 生成';
 
 export async function deckToPptx(deck: SlideDeck): Promise<Buffer> {
-  const tokens = THEMES[deck.theme ?? 'ocean'] ?? THEMES.ocean;
+  const brand = deck.brand;
+  const tokens = resolveTokens(deck.theme, brand);
+  const font = brand?.fontFace || DEFAULT_FONT;
+  const footer = brand?.footer || brand?.organization || DEFAULT_FOOTER;
   const pptx = new PptxGenJS();
   pptx.layout = 'LAYOUT_16x9';
-  pptx.author = 'Mirelth Desk';
+  pptx.author = brand?.organization || 'Mirelth Desk';
   pptx.title = deck.title;
 
   const bulletText = (items: string[]): Array<{ text: string; options: Record<string, unknown> }> =>
     items.map((bullet) => ({ text: bullet, options: { bullet: { code: '2022' }, breakLine: true } }));
 
+  /** Logo 放右上角，尺寸固定以免大图撑破版面；无 Logo 时什么都不画。 */
+  const putLogo = (page: PptxSlide): void => {
+    if (!brand?.logoDataUri) return;
+    page.addImage({ data: brand.logoDataUri, x: 8.85, y: 0.28, w: 0.85, h: 0.45 });
+  };
+
   const cover = pptx.addSlide();
   cover.background = { color: tokens.cover };
-  cover.addText(deck.title, { x: 0.8, y: 2.0, w: 8.4, h: 1.4, fontSize: 36, bold: true, color: 'FFFFFF', fontFace: FONT_FACE });
+  putLogo(cover);
+  if (brand?.organization) {
+    cover.addText(brand.organization, { x: 0.8, y: 1.35, w: 7.8, h: 0.4, fontSize: 14, color: tokens.onCover, fontFace: font });
+  }
+  cover.addText(deck.title, { x: 0.8, y: 2.0, w: 8.4, h: 1.4, fontSize: 36, bold: true, color: 'FFFFFF', fontFace: font });
   cover.addShape('line', { x: 0.82, y: 3.35, w: 2.2, h: 0, line: { color: tokens.accent, width: 3 } });
-  cover.addText('Mirelth Desk · AI Office 生成', { x: 0.8, y: 3.6, w: 8.4, h: 0.5, fontSize: 14, color: 'D8E2EF', fontFace: FONT_FACE });
+  cover.addText(brand?.tagline || footer, { x: 0.8, y: 3.6, w: 8.4, h: 0.5, fontSize: 14, color: tokens.onCover, fontFace: font });
 
   deck.slides.forEach((slide, index) => {
     const page = pptx.addSlide();
     const layout = slide.layout ?? 'bullets';
+    const dark = layout === 'section' || layout === 'closing';
 
-    if (layout === 'section') {
-      // 分节页：整页底色 + 大标题，用于 H1 层级。
+    if (layout === 'section' || layout === 'closing') {
+      // 分节页与结束页：整页底色 + 大标题。
       page.background = { color: tokens.cover };
-      page.addText(slide.title, { x: 0.8, y: 2.2, w: 8.4, h: 1.0, fontSize: 30, bold: true, color: 'FFFFFF', fontFace: FONT_FACE });
-      page.addShape('line', { x: 0.82, y: 3.3, w: 1.8, h: 0, line: { color: tokens.accent, width: 3 } });
+      putLogo(page);
+      page.addText(slide.title, {
+        x: 0.8, y: layout === 'closing' ? 2.0 : 2.2, w: 8.4, h: 1.0,
+        fontSize: layout === 'closing' ? 34 : 30, bold: true, color: 'FFFFFF', fontFace: font,
+      });
+      page.addShape('line', { x: 0.82, y: layout === 'closing' ? 3.15 : 3.3, w: 1.8, h: 0, line: { color: tokens.accent, width: 3 } });
       if (slide.bullets.length) {
-        page.addText(slide.bullets[0], { x: 0.8, y: 3.5, w: 8.4, h: 0.6, fontSize: 15, color: 'D8E2EF', fontFace: FONT_FACE });
+        page.addText(slide.bullets.slice(0, layout === 'closing' ? 3 : 1).join('\n'), {
+          x: 0.8, y: layout === 'closing' ? 3.35 : 3.5, w: 8.4, h: layout === 'closing' ? 1.2 : 0.6,
+          fontSize: 15, color: tokens.onCover, fontFace: font, valign: 'top',
+        });
       }
     } else {
-      page.addText(slide.title, { x: 0.6, y: 0.35, w: 8.8, h: 0.7, fontSize: 24, bold: true, color: tokens.heading, fontFace: FONT_FACE });
+      putLogo(page);
+      // 有 Logo 时标题宽度收窄，避免文字压到图上。
+      page.addText(slide.title, {
+        x: 0.6, y: 0.35, w: brand?.logoDataUri ? 8.0 : 8.8, h: 0.7,
+        fontSize: 24, bold: true, color: tokens.heading, fontFace: font,
+      });
       page.addShape('line', { x: 0.62, y: 1.12, w: 1.6, h: 0, line: { color: tokens.accent, width: 2 } });
 
       if (layout === 'table' && slide.table?.length) {
@@ -438,8 +685,8 @@ export async function deckToPptx(deck: SlideDeck): Promise<Buffer> {
             options: {
               bold: rowIndex === 0,
               color: rowIndex === 0 ? 'FFFFFF' : tokens.body,
-              fill: { color: rowIndex === 0 ? tokens.cover : (rowIndex % 2 ? 'F5F7FA' : 'FFFFFF') },
-              fontSize: 12, fontFace: FONT_FACE, valign: 'middle' as const,
+              fill: { color: rowIndex === 0 ? tokens.cover : (rowIndex % 2 ? tokens.surface : 'FFFFFF') },
+              fontSize: 12, fontFace: font, valign: 'middle' as const,
             },
           }));
         });
@@ -450,24 +697,103 @@ export async function deckToPptx(deck: SlideDeck): Promise<Buffer> {
       } else if (layout === 'twoColumn' && slide.columns) {
         slide.columns.forEach((column, columnIndex) => {
           const x = columnIndex === 0 ? 0.6 : 5.1;
-          page.addShape('rect', { x, y: 1.4, w: 4.3, h: 3.5, fill: { color: 'F5F7FA' }, line: { color: 'E2E8F0', width: 1 } });
+          page.addShape('rect', { x, y: 1.4, w: 4.3, h: 3.5, fill: { color: tokens.surface }, line: { color: 'E2E8F0', width: 1 } });
           if (column.length) {
             page.addText(bulletText(column), {
               x: x + 0.2, y: 1.6, w: 3.9, h: 3.1, fontSize: 14, color: tokens.body,
-              fontFace: FONT_FACE, paraSpaceAfter: 8, valign: 'top',
+              fontFace: font, paraSpaceAfter: 8, valign: 'top',
             });
           }
         });
+      } else if (layout === 'quote' && slide.quote) {
+        page.addShape('rect', { x: 0.6, y: 1.5, w: 0.12, h: 2.6, fill: { color: tokens.accent } });
+        page.addText(slide.quote.text, {
+          x: 1.0, y: 1.6, w: 8.2, h: 2.2, fontSize: 20, italic: true,
+          color: tokens.heading, fontFace: font, valign: 'top',
+        });
+        if (slide.quote.attribution) {
+          page.addText(`— ${slide.quote.attribution}`, {
+            x: 1.0, y: 3.9, w: 8.2, h: 0.5, fontSize: 14, color: tokens.muted, fontFace: font,
+          });
+        }
+      } else if (layout === 'metrics' && slide.metrics?.length) {
+        const count = slide.metrics.length;
+        const gap = 0.25;
+        const cardWidth = (8.8 - gap * (count - 1)) / count;
+        slide.metrics.forEach((metric, metricIndex) => {
+          const x = 0.6 + metricIndex * (cardWidth + gap);
+          page.addShape('rect', { x, y: 1.6, w: cardWidth, h: 2.4, fill: { color: tokens.surface }, line: { color: 'E2E8F0', width: 1 } });
+          page.addText(metric.value, {
+            x: x + 0.1, y: 1.9, w: cardWidth - 0.2, h: 0.9, fontSize: count > 3 ? 26 : 32,
+            bold: true, color: tokens.accent, fontFace: font, align: 'center',
+          });
+          page.addText(metric.label, {
+            x: x + 0.1, y: 2.85, w: cardWidth - 0.2, h: 0.5, fontSize: 14,
+            color: tokens.heading, fontFace: font, align: 'center',
+          });
+          if (metric.note) {
+            page.addText(metric.note, {
+              x: x + 0.1, y: 3.35, w: cardWidth - 0.2, h: 0.5, fontSize: 11,
+              color: tokens.muted, fontFace: font, align: 'center',
+            });
+          }
+        });
+      } else if (layout === 'timeline' && slide.timeline?.length) {
+        const items = slide.timeline;
+        const step = 8.8 / items.length;
+        // 贯穿的横线 + 每项一个圆点，构成时间轴。
+        page.addShape('line', { x: 0.7, y: 2.0, w: 8.6, h: 0, line: { color: tokens.accent, width: 2 } });
+        items.forEach((item, itemIndex) => {
+          const x = 0.6 + itemIndex * step;
+          page.addShape('ellipse', { x: x + step / 2 - 0.08, y: 1.92, w: 0.16, h: 0.16, fill: { color: tokens.accent } });
+          page.addText(item.label, {
+            x, y: 1.4, w: step - 0.1, h: 0.4, fontSize: 13, bold: true,
+            color: tokens.heading, fontFace: font, align: 'center',
+          });
+          page.addText(item.text, {
+            x, y: 2.3, w: step - 0.1, h: 1.6, fontSize: 12,
+            color: tokens.body, fontFace: font, align: 'center', valign: 'top',
+          });
+        });
+      } else if (layout === 'chart' && slide.chart) {
+        const { labels, values, caption } = slide.chart;
+        const max = Math.max(...values.map((value) => Math.abs(value)), 1);
+        const step = 8.8 / labels.length;
+        const barWidth = Math.min(step * 0.6, 1.1);
+        const baseY = 4.3;
+        const maxHeight = 2.5;
+        page.addShape('line', { x: 0.6, y: baseY, w: 8.8, h: 0, line: { color: 'D8DEE6', width: 1 } });
+        values.forEach((value, valueIndex) => {
+          const height = Math.max((Math.abs(value) / max) * maxHeight, 0.05);
+          const x = 0.6 + valueIndex * step + (step - barWidth) / 2;
+          page.addShape('rect', { x, y: baseY - height, w: barWidth, h: height, fill: { color: tokens.accent } });
+          page.addText(String(value), {
+            x: x - 0.1, y: baseY - height - 0.35, w: barWidth + 0.2, h: 0.3,
+            fontSize: 11, color: tokens.heading, fontFace: font, align: 'center',
+          });
+          page.addText(labels[valueIndex], {
+            x: 0.6 + valueIndex * step, y: baseY + 0.1, w: step - 0.05, h: 0.5,
+            fontSize: 11, color: tokens.muted, fontFace: font, align: 'center',
+          });
+        });
+        if (caption) {
+          page.addText(caption, { x: 0.6, y: 1.25, w: 8.8, h: 0.35, fontSize: 12, color: tokens.muted, fontFace: font });
+        }
       } else if (slide.bullets.length) {
         page.addText(bulletText(slide.bullets), {
-          x: 0.6, y: 1.4, w: 8.8, h: 3.6, fontSize: 16, color: tokens.body, fontFace: FONT_FACE,
+          x: 0.6, y: 1.4, w: 8.8, h: 3.6, fontSize: 16, color: tokens.body, fontFace: font,
           paraSpaceAfter: 10, valign: 'top',
         });
       }
     }
+    // 页脚：左侧品牌文案，右侧页码。深底页用浅色以免看不见。
+    page.addText(footer, {
+      x: 0.6, y: 5.15, w: 6.0, h: 0.35, fontSize: 9,
+      color: dark ? tokens.onCover : tokens.muted, fontFace: font,
+    });
     page.addText(`${index + 1} / ${deck.slides.length}`, {
       x: 8.9, y: 5.15, w: 0.8, h: 0.35, fontSize: 10,
-      color: layout === 'section' ? 'D8E2EF' : tokens.muted, align: 'right', fontFace: FONT_FACE,
+      color: dark ? tokens.onCover : tokens.muted, align: 'right', fontFace: font,
     });
   });
 

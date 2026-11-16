@@ -1,11 +1,13 @@
 import { z } from 'zod';
+import { config } from '../../shared/config.ts';
 
 export const nameSchema = z.object({ name: z.string().min(1).max(120) });
 
 export const agentSchema = z.object({
   name: z.string().min(1).max(120), description: z.string().max(500).optional(),
   systemPrompt: z.string().max(4000).optional(), tools: z.array(z.string()).max(40).optional(),
-  model: z.string().max(80).optional(), maxSteps: z.number().int().min(1).max(8).optional(),
+  // 上限跟随配置（AGENT_MAX_STEPS），不再固定 8。
+  model: z.string().max(80).optional(), maxSteps: z.number().int().min(1).max(config.agent.maxSteps).optional(),
 });
 
 export const chatSchema = z.object({
@@ -53,6 +55,28 @@ export const toolSchema = z.object({
 });
 
 export const memberSchema = z.object({ username: z.string().min(1).max(64), role: z.string().min(1).max(20) });
+
+/** 插件入参：只允许三种标量，不接受任意 JSON Schema。 */
+const pluginParameterSchema = z.object({
+  type: z.enum(['string', 'number', 'boolean']),
+  description: z.string().max(200).optional().default(''),
+  required: z.boolean().optional(),
+});
+
+export const pluginSchema = z.object({
+  name: z.string().min(1).max(64),
+  displayName: z.string().max(120).optional(),
+  description: z.string().min(1, '请说明这个插件做什么').max(300),
+  endpoint: z.string().min(1).max(400),
+  kind: z.enum(['http', 'mcp']).optional(),
+  method: z.enum(['GET', 'POST']).optional(),
+  parameters: z.record(z.string(), pluginParameterSchema).optional(),
+  authHeaderName: z.string().max(60).optional(),
+  authToken: z.string().max(500).optional(),
+  confirmedRequired: z.boolean().optional(),
+  timeoutMs: z.number().int().min(1000).max(60_000).optional(),
+  enabled: z.boolean().optional(),
+});
 
 export const versionSchema = z.object({ documentId: z.string().min(1), note: z.string().max(200).optional() });
 

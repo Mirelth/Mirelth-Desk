@@ -210,7 +210,9 @@ export async function chatWithTools(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.llm.apiKey}` },
     body: JSON.stringify({
-      model: config.llm.model, messages, tools, tool_choice: 'auto', temperature: 0.3, stream: false,
+      model: config.llm.model, messages, temperature: 0.3, stream: false,
+      // 空数组会被 OpenAI 兼容接口拒绝（tools 至少 1 项）；规划与反思是纯文本往返，必须整字段省略。
+      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
     }),
     signal: AbortSignal.timeout(90_000),
   });

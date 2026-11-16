@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { apiClient, getErrorMessage } from '../../lib/api.ts';
 import { useLoad } from '../../lib/hooks.ts';
-import type { PlatformAgent, PlatformTool } from '../../lib/types.ts';
+import type { PlatformAgent, PlatformStatus, PlatformTool } from '../../lib/types.ts';
 import { Badge, Button, EmptyState, Field, IconButton, Modal, SectionTitle, formatDate, useToast } from '../../lib/ui.tsx';
 
 interface AgentDraft {
@@ -20,12 +20,14 @@ export function PlatformAgents({ onChanged }: { onChanged?: () => void }) {
   const toast = useToast();
   const agents = useLoad<PlatformAgent[]>(() => apiClient.get<PlatformAgent[]>('/api/platform/agents'));
   const tools = useLoad<PlatformTool[]>(() => apiClient.get<PlatformTool[]>('/api/platform/tools'));
+  const status = useLoad<PlatformStatus>(() => apiClient.get<PlatformStatus>('/api/platform/status'));
+  // 上限由后端配置决定（AGENT_MAX_STEPS），前端不写死。
+  const stepCeiling = status.data?.planning?.maxSteps ?? 24;
+  const stepDefault = status.data?.planning?.defaultSteps ?? 8;
 
   const [draft, setDraft] = useState<AgentDraft | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const [toolDraft, setToolDraft] = useState({ name: '', description: '', webhook: '' });
-  const [toolOpen, setToolOpen] = useState(false);
 
   const save = async () => {
     if (!draft) return;
@@ -60,23 +62,6 @@ export function PlatformAgents({ onChanged }: { onChanged?: () => void }) {
     finally { setBusy(false); }
   };
 
-  const registerTool = async () => {
-    if (!toolDraft.name.trim() || !toolDraft.description.trim()) { toast('工具名与描述都要填', 'error'); return; }
-    setBusy(true);
-    try {
-      await apiClient.post('/api/platform/tools', {
-        name: toolDraft.name.trim(),
-        description: toolDraft.description.trim(),
-        webhook: toolDraft.webhook.trim() || undefined,
-      });
-      setToolDraft({ name: '', description: '', webhook: '' });
-      setToolOpen(false);
-      await tools.reload();
-      toast('自定义工具已注册（重启后失效）', 'success');
-    } catch (error) { toast(getErrorMessage(error), 'error'); }
-    finally { setBusy(false); }
-  };
-
   const toggleTool = (name: string) => {
     if (!draft) return;
     const next = draft.tools.includes(name) ? draft.tools.filter((item) => item !== name) : [...draft.tools, name];
@@ -90,7 +75,7 @@ export function PlatformAgents({ onChanged }: { onChanged?: () => void }) {
       <SectionTitle
         title="智能体定义"
         hint="提示词与工具白名单都落在工作区里；不填即使用默认行为"
-        action={<div className="row"><Button variant="ghost" size="sm" icon="plus" onClick={() => setToolOpen(true)}>注册工具</Button><Button size="sm" icon="plus" onClick={() => setDraft({ ...EMPTY })}>新建智能体</Button></div>}
+        action={<div className="row"><Button variant="ghost" size="sm" icon="bolt" onClick={() => { window.location.hash = '#/platform/plugins'; }}>管理插件</Button><Button size="sm" icon="plus" onClick={() => setDraft({ ...EMPTY, maxSteps: stepDefault })}>新建智能体</Button></div>}
       />
 
       {agents.error && <div className="text-xs muted mb-12">{agents.error}</div>}
@@ -130,9 +115,9 @@ export function PlatformAgents({ onChanged }: { onChanged?: () => void }) {
             <Field label="系统提示词" hint="留空表示不加额外约束">
               <textarea className="input" rows={4} value={draft.systemPrompt} onChange={(event) => setDraft({ ...draft, systemPrompt: event.target.value })} />
             </Field>
-            <Field label="步数上限" hint="1–8，实际还受工作区配额约束">
-              <input className="input" type="number" min={1} max={8} value={draft.maxSteps}
-                onChange={(event) => setDraft({ ...draft, maxSteps: Math.min(8, Math.max(1, Number(event.target.value) || 1)) })} />
+            <Field label="步数上限" hint={`1–${stepCeiling}，实际还受工作区配额与运行时长约束`}>
+              <input className="input" type="number" min={1} max={stepCeiling} value={draft.maxSteps}
+                onChange={(event) => setDraft({ ...draft, maxSteps: Math.min(stepCeiling, Math.max(1, Number(event.target.value) || 1)) })} />
             </Field>
             <Field label="工具白名单" hint={draft.tools.length ? '已选 ' + draft.tools.length + ' 个' : '不选 = 继承默认全部工具'}>
               <div className="row wrap" style={{ maxHeight: 180, overflowY: 'auto' }}>
@@ -146,21 +131,6 @@ export function PlatformAgents({ onChanged }: { onChanged?: () => void }) {
         )}
       </Modal>
 
-      <Modal
-        open={toolOpen}
-        onClose={() => setToolOpen(false)}
-        title="注册自定义工具"
-        subtitle="工具存在于进程内存里：重启即丢，也不按工作区隔离"
-        footer={<><Button variant="ghost" onClick={() => setToolOpen(false)}>取消</Button><Button loading={busy} onClick={() => void registerTool()}>注册</Button></>}
-      >
-        <div className="stack-sm">
-          <Field label="工具名" hint="字母、数字、下划线或连字符"><input className="input" value={toolDraft.name} onChange={(event) => setToolDraft({ ...toolDraft, name: event.target.value })} /></Field>
-          <Field label="描述"><input className="input" value={toolDraft.description} onChange={(event) => setToolDraft({ ...toolDraft, description: event.target.value })} /></Field>
-          <Field label="Webhook（可选）" hint="不填则只回显参数，不发请求">
-            <input className="input" placeholder="https://…" value={toolDraft.webhook} onChange={(event) => setToolDraft({ ...toolDraft, webhook: event.target.value })} />
-          </Field>
-        </div>
-      </Modal>
     </div>
   );
 }

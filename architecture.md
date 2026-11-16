@@ -55,7 +55,7 @@ shared/seed ─▶ features/auth  唯一一处 shared → features 的反向边�
 
 `system` 是外壳自己的只读边：版本自检与诊断日志打包（`GET /api/system/info|logs`），只读 `package.json` 与 `logger` 的内存缓冲，不碰业务表。
 
-`platform` 与 `agent` 的区别值得记牢：`agent` 是无状态的任务端点（给 kind + input，拿回生成文本），`platform` 是有状态的会话式智能体（会话、运行记录、工具调用、RAG、配额）。`platform` 的 43 条路由全部挂载，客户端 `client/pages/Platform.tsx` 的 8 个 tab 覆盖到每一组；**入站调用**（`/webhook/:key` 与 `/mcp`）走 `platform.auth.ts` 的 `apiKeyMiddleware`，它在 `app.ts` 里排在会话鉴权之前。
+`platform` 与 `agent` 的区别值得记牢：`agent` 是无状态的任务端点（给 kind + input，拿回生成文本），`platform` 是有状态的会话式智能体（会话、运行记录、工具调用、RAG、配额），其执行是**规划-执行-反思状态机**：`platform/planner.ts` 只做规划与反思（纯函数 + 经 provider 的模型调用，不碰库不执行工具），`platform/engine.ts` 负责推进、回填与留痕，步数与时长上限来自 `config.agent`。`platform` 的 43 条路由全部挂载，客户端 `client/pages/Platform.tsx` 的 8 个 tab 覆盖到每一组；**入站调用**（`/webhook/:key` 与 `/mcp`）走 `platform.auth.ts` 的 `apiKeyMiddleware`，它在 `app.ts` 里排在会话鉴权之前。
 
 ## 已强制的约束
 
@@ -68,6 +68,8 @@ shared/seed ─▶ features/auth  唯一一处 shared → features 的反向边�
 5. **模型调用单点**：只有 `server/ai/provider.ts` 发 LLM 请求（chat 与 **embeddings** 都在此）；feature 组装 payload 而不是拼 HTTP。Office 格式转换集中在 `shared/office.ts`（docx/mammoth/pptxgenjs）与 `analytics/xlsx.ts`（exceljs），只依赖第三方库与 `shared/errors`，不发模型请求；PPTX 大纲仍走 `document.slides` 任务经 provider 生成。
 5b. **格式解析层**：`shared/pdf.ts`（pdfjs-dist legacy）负责文本层提取与**逐页渲染为 PNG**（渲染用 pdfjs 官方推荐的 `@napi-rs/canvas`，预编译二进制）。图片与扫描件识别统一走 `provider.visionTranscribe`——**多模态模型是唯一识别路径**，已移除 tesseract 与语言包下载逻辑。未配模型时抛错而非静默降级（图片识别没有离线替代，返回空会让用户误以为图里没字）；这与 `embed` 的「失败即降级」策略刻意不同。
 5c. **浏览器是唯一需要网络的执行层**：`features/browser/` 通过 CDP 附着本机浏览器，默认关闭（`BROWSER_ENABLED`）、只允许回环调试地址、域名白名单默认空即拒绝全部、`click`/`fill` 必须带 `confirmed=true`，每步写 `browser_runs` 与活动流水，不读取也不存储 Cookie。「完全离线」承诺不覆盖本模块。
+5d. **插件出站有唯一闸门**：`shared/outbound.ts` 是插件 HTTP 调用的必经之处——协议校验 → 私网拒绝（默认，含云元数据段）→ 域名白名单（**空即拒全部**）→ 不跟随重定向 → 响应体积封顶。插件定义落 `plugins` 表并**按工作区隔离**：`platform/tools.ts` 的 `allTools/getTool/modelToolSchemas` 不带 workspaceId 就只返回内置工具。插件**不执行代码**，只做声明式调用；凭据走 `shared/crypto` 加密、服务端注入。LLM 请求仍只在 `ai/provider.ts`，CDP 仍只在 `features/browser`，两者不经此闸门。**MCP 出站**（`platform/mcp-client.ts`）同样经此闸门，且因协议允许 3xx 而用 `redirect:'manual'` **对每一跳重新校验**。工具解析链（`allTools/getTool/toolManifest/modelToolSchemas`）因此**全部是异步的**——这是引入远端工具发现后的必然代价，新增调用点必须 await。
+5e. **向量检索两条路径**：`platform/rag.ts` 的 `semanticCandidates` 决定走全扫还是索引——小库全扫（上限 50000），大库经 `platform/vector-index.ts` 的粗量化分桶裁剪候选后仍用原始向量精排。索引表 `vector_centroids`/`vector_buckets` 按「工作区+模型+维度」隔离，换模型即换索引。**三张表（knowledge_chunks / knowledge_fts / vector_buckets）无触发器兜底，删来源必须三处成对清理**。记忆同理分四层（`platform/memories.ts`），层是内部组织方式，对外的 `kind` 语义不变；偏好与事实只显式写入，episodic 自动留痕但默认关闭。
 6. **多租户隔离靠约定，不靠机制**：业务查询通常带 `user_id` 过滤（由 `authenticate` 提供），平台侧的路由再套一层 `requireRole(workspaceId, userId, …)`。但没有任何类型或运行时检查拦住一条漏了过滤的新查询。三处刻意例外：邮件仓储按 `account_id` 匹配，`workspace.repository.dueTasks` 跨用户取到期任务（调度器必须如此），事件匹配按 `user_id` 而不按 `workspace_id`（任务的 `workspace_id` 为空，理由见 `platform-subsystem`）。
 7. **入站凭据只在两条路由生效**：`apiKeyMiddleware` 仅对 `/webhook/:key` 与 `/mcp` 解析 `X-Api-Key`，其余路由带了也不认；传入的工作区固定在 key 上，角色以 key 自身为上限（`assertKeyRole`）。Key 明文只回一次，库里只有 SHA-256 摘要。
 7. **凭据静态加密**：邮箱密码与连接器 token 走 AES-256-GCM，密钥由 `APP_SECRET` 经 SHA-256 派生（`shared/crypto.ts`）。
@@ -90,7 +92,7 @@ shared/seed ─▶ features/auth  唯一一处 shared → features 的反向边�
 - **`users` 表仍只有 `id/username/密码/时间`**：没有邮箱、没有改名、没有角色列——安装管理员靠「最早创建的那个账号」判定，工作区角色存在 `memberships` 里。
 - **默认口令仍在服务端**：API 已只绑 `127.0.0.1`，登录页也不再预填或显示密码，但 `shared/config.ts` 里 `ADMIN_PASSWORD` 的默认值仍是 `admin123`，`.env.example` 与 README 照旧写着它。要彻底消除得另起一轮（会牵动首次启动体验与 `scripts/smoke.ts`）。
 - `requireRole` 已改抛 `ForbiddenError`（`AppError` 子类）——以前是带 `status: 403` 的普通 `Error`，会被记成 500。它也在「工作区不存在」时回 403 而非 404，调用方分不清两种情形。
-- `settings` 表在 `001_init.sql` 建好但无任何读写。
+- ~~`settings` 表在 `001_init.sql` 建好但无任何读写。~~ **已被 `005_drop_settings.sql` 删除**，该表不存在；需要持久配置请新建迁移，不要去找它。
 - **环境读取还有一处绕开 `config`**：`shared/logger.ts:7` 读 `NODE_ENV`（`AI_DAILY_LIMIT` 已收进 `config.ai.dailyLimit`）。
 - **活动流水已覆盖全部写路径，口径是「全记」**：包括连通性测试、手动标记已读、打开未读邮件时的隐式已读——它们只因实现而落库，会让「最近动态」比较吵。取舍见 `activity`。
 - `workspace` 目录指「自动化任务 + 连接器」，`platform` 里的 workspace 指「多工作区」——同名不同义，读代码时先分辨。

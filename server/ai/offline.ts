@@ -359,37 +359,72 @@ function agentChat(input: AiInput): string {
 function documentSlides(input: AiInput): string {
   const title = text(input, 'title', '未命名文档');
   const content = text(input, 'content');
-  const slides: Array<{ title: string; bullets: string[] }> = [];
-  let current: { title: string; bullets: string[] } | null = null;
+  interface OfflineSlide {
+    title: string; bullets: string[]; layout: string;
+    quote?: { text: string };
+    table?: string[][];
+  }
+  const slides: OfflineSlide[] = [];
+  let current: OfflineSlide | null = null;
+  let pendingTable: string[][] = [];
   const push = (value: string): void => {
     if (current && value && current.bullets.length < 6) current.bullets.push(clip(value, 60));
+  };
+  /**
+   * 表格落地：文档里的表格是**真实结构**，压成「A ｜ B」要点会丢掉行列对应。
+   * 有两行以上就升格为表格页；不足两行才退回要点。
+   */
+  const flushTable = (): void => {
+    const page = slides[slides.length - 1];
+    if (page && pendingTable.length >= 2 && !page.bullets.length) {
+      page.layout = 'table';
+      page.table = pendingTable.slice(0, 9).map((row) => row.map((cell) => clip(cell, 60)));
+    } else {
+      for (const row of pendingTable) push(row.join(' ｜ '));
+    }
+    pendingTable = [];
   };
   for (const raw of content.split('\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('```')) continue;
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
+      flushTable();
       if (heading[1].length <= 2) {
-        current = { title: clip(heading[2].replace(/[*`]/g, ''), 40), bullets: [] };
+        // H1 作分节页，H2 作内容页——离线也能体现层级。
+        current = {
+          title: clip(heading[2].replace(/[*`]/g, ''), 40), bullets: [],
+          layout: heading[1].length === 1 ? 'section' : 'bullets',
+        };
         slides.push(current);
       } else push(heading[2].replace(/[*`]/g, ''));
       continue;
     }
-    if (!current) { current = { title: '概述', bullets: [] }; slides.push(current); }
+    if (!current) { current = { title: '概述', bullets: [], layout: 'bullets' }; slides.push(current); }
+    if (/^\|.*\|$/.test(line)) {
+      const cells = line.slice(1, -1).split('|').map((cell) => cell.trim().replace(/[*`]/g, ''));
+      if (!cells.every((cell) => /^:?-{2,}:?$/.test(cell))) pendingTable.push(cells);
+      continue;
+    }
+    flushTable();
     if (/^[-*]\s+/.test(line)) push(line.replace(/^[-*]\s+/, '').replace(/[*`]/g, ''));
     else if (/^\d+\.\s+/.test(line)) push(line.replace(/[*`]/g, ''));
-    else if (/^\|.*\|$/.test(line)) {
-      const cells = line.slice(1, -1).split('|').map((cell) => cell.trim());
-      if (!cells.every((cell) => /^:?-{2,}:?$/.test(cell))) push(cells.join(' ｜ '));
-    } else if (!line.startsWith('>')) push(line.replace(/[*`]/g, ''));
+    else if (line.startsWith('>')) {
+      // 引文单独成页；只用文档原文，不做任何改写。
+      const quoted = line.replace(/^>\s?/, '').replace(/[*`]/g, '');
+      if (current && !current.bullets.length && quoted.length >= 20) {
+        current.layout = 'quote';
+        current.quote = { text: clip(quoted, 200) };
+      } else push(quoted);
+    } else push(line.replace(/[*`]/g, ''));
   }
-  const usable = slides.filter((slide) => slide.bullets.length || slide.title !== '概述').slice(0, 12);
-  if (!usable.length) usable.push({ title: clip(title, 40), bullets: ['文档暂无正文，请先补充内容再生成演示'] });
-  return JSON.stringify({
-    title: clip(title, 60),
-    theme: 'ocean',
-    slides: usable.map((slide) => ({ ...slide, layout: 'bullets' })),
-  });
+  flushTable();
+  const usable = slides
+    .filter((slide) => slide.bullets.length || slide.quote || slide.table?.length || slide.layout === 'section' || slide.title !== '概述')
+    .slice(0, 12);
+  if (!usable.length) usable.push({ title: clip(title, 40), bullets: ['文档暂无正文，请先补充内容再生成演示'], layout: 'bullets' });
+  // 离线不产出 metrics/chart：那需要真实数字，规则引擎无法凭空得到。
+  return JSON.stringify({ title: clip(title, 60), theme: 'ocean', slides: usable });
 }
 
 export function offlineGenerate(kind: TaskKind, input: AiInput): string {

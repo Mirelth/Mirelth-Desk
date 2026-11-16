@@ -98,13 +98,23 @@ export async function streamTask(kind: TaskKind, input: Record<string, unknown>,
 
 /** `platform` 的会话流：event 名就是步骤类型，data 是整条事件对象。 */
 export interface PlatformChatEvent {
-  type: 'meta' | 'step' | 'delta' | 'done' | 'error';
+  type: 'meta' | 'plan' | 'step' | 'reflect' | 'delta' | 'done' | 'error';
   text?: string;
   tool?: string;
   status?: 'start' | 'done';
   detail?: string;
   runId?: string;
   conversationId?: string;
+  /** plan 事件 */
+  goal?: string;
+  origin?: string;
+  steps?: Array<{ id: string; goal: string; tool: string; status: string }>;
+  /** reflect 事件 */
+  verdict?: string;
+  reason?: string;
+  revision?: number;
+  /** done 事件：预算用尽或超时的收尾原因 */
+  stopped?: string;
 }
 
 export async function streamPlatformChat(
@@ -129,8 +139,19 @@ export async function streamPlatformChat(
   });
 }
 
-export async function downloadFile(path: string, fallback: string): Promise<void> {
-  const response = await fetch(`${BASE}${path}`, { credentials: 'include' });
+/**
+ * 下载文件。传 body 时改用 POST——品牌套件含 Logo 的 base64，放不进查询串。
+ * 不传 body 仍是 GET，既有调用点行为不变。
+ */
+export async function downloadFile(path: string, fallback: string, body?: unknown): Promise<void> {
+  const response = await fetch(`${BASE}${path}`, {
+    credentials: 'include',
+    ...(body === undefined ? {} : {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  });
   if (!response.ok) throw new ApiError(response.status, await response.json().catch(() => null) as Record<string, unknown> | null);
   const disposition = response.headers.get('content-disposition') ?? '';
   const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];

@@ -5,6 +5,7 @@ import { BadRequestError, NotFoundError } from '../../shared/errors.ts';
 import { exportHtml } from '../../shared/markdown.ts';
 import {
   OFFICE_MIME, decodeBase64File, deckToPptx, docxToMarkdown, markdownToDeck, markdownToDocx, parseDeckJson,
+  type BrandKit, type DeckTheme,
 } from '../../shared/office.ts';
 import { pdfPageCount, pdfToMarkdown, renderPdfPages } from '../../shared/pdf.ts';
 import { visionTranscribe, visionModelName } from '../../ai/provider.ts';
@@ -225,11 +226,18 @@ export const documentsService = {
     return doc;
   },
 
-  /** AI Office：文档 → 演示文稿。模型输出 JSON 大纲，解析失败或离线时按文档标题结构切分兜底。 */
-  async slides(userId: string, id: string) {
+  /**
+   * AI Office：文档 → 演示文稿。模型输出 JSON 大纲，解析失败或离线时按文档标题结构切分兜底。
+   *
+   * 主题与品牌**由用户显式指定的优先**：模型可能自选主题，但用户选了就该听用户的；
+   * 品牌套件同理，模型不该决定用户的组织名与 Logo。
+   */
+  async slides(userId: string, id: string, options?: { theme?: DeckTheme; brand?: BrandKit }) {
     const doc = this.get(userId, id);
     const result = await generate('document.slides', { title: doc.title, content: doc.content });
     const deck = parseDeckJson(result.text) ?? markdownToDeck(doc.title, doc.content);
+    if (options?.theme) deck.theme = options.theme;
+    if (options?.brand) deck.brand = { ...deck.brand, ...options.brand };
     const buffer = await deckToPptx(deck);
     activityService.record(userId, 'agent', 'document_slides', `为「${doc.title}」生成演示文稿（${deck.slides.length} 页）`);
     const safeName = doc.title.replace(/[\\/:*?"<>|]/g, '_');

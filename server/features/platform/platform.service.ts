@@ -8,9 +8,11 @@ import { aiStatus } from '../../ai/provider.ts';
 import { documentsService } from '../documents/documents.service.ts';
 import { workspaceService } from '../workspace/workspace.service.ts';
 import { embedPending, indexChunk, indexSize, reindex, removeSource, searchHybrid, semanticSize } from './rag.ts';
-import { memoriesService } from './memories.ts';
+import { memoriesService, MEMORY_LAYERS, type MemoryLayer } from './memories.ts';
 import { audit, count, defaultWorkspace, deleteRows, insertRow, requireRole, row, rows, updateRows, ROLE_LEVEL } from './store.ts';
-import { allTools, executeTool, getTool, registerTool, toolManifest } from './tools.ts';
+import { allTools, builtinToolNames, executeTool, getTool, toolManifest } from './tools.ts';
+import { pluginsService } from './plugins.ts';
+import { buildIndex, dropIndex, indexStats } from './vector-index.ts';
 
 const DAILY_LIMIT = config.ai.dailyLimit;
 
@@ -19,13 +21,13 @@ function filesDir(): string {
 }
 
 export const platformService = {
-  status(userId: string) {
+  async status(userId: string) {
     const workspace = defaultWorkspace(userId);
     const today = new Date().toISOString().slice(0, 10);
     return {
       ...aiStatus(),
       workspace,
-      tools: allTools().length,
+      tools: (await allTools(workspace.id)).length,
       knowledgeChunks: indexSize(workspace.id),
       conversations: count('conversations', 'workspace_id = ?', [workspace.id]),
       runs: count('agent_runs', 'workspace_id = ?', [workspace.id]),
@@ -38,11 +40,24 @@ export const platformService = {
         mode: semanticSize(workspace.id) > 0 ? 'hybrid' : 'lexical',
         semanticChunks: semanticSize(workspace.id),
         embeddingModel: config.llm.embeddingEnabled ? config.llm.embeddingModel : '',
+        vectorIndex: config.llm.embeddingEnabled
+          ? indexStats(workspace.id, config.llm.embeddingModel)
+          : null,
       },
       memories: memoriesService.count(workspace.id, userId),
+      memoryLayers: memoriesService.layerStatus(workspace.id, userId),
+      planning: {
+        planner: config.agent.plannerEnabled,
+        reflect: config.agent.reflectEnabled,
+        maxSteps: config.agent.maxSteps,
+        defaultSteps: config.agent.defaultSteps,
+        maxRevisions: config.agent.maxRevisions,
+        runTimeoutMs: config.agent.runTimeoutMs,
+      },
+      plugins: pluginsService.status(workspace.id),
       features: ['tool_calls', 'rag_hybrid', 'conversations', 'memory', 'workspaces', 'shares',
         'comments', 'versions', 'files', 'events', 'audit', 'quota', 'workflows', 'mcp',
-        'pdf_import', 'ocr', 'browser_automation'],
+        'pdf_import', 'ocr', 'browser_automation', 'planner', 'reflection', 'plugins', 'vector_index', 'memory_layers'],
     };
   },
 
@@ -99,7 +114,7 @@ export const platformService = {
     const id = insertRow('agent_definitions', {
       workspace_id: workspaceId, name: input.name, description: input.description ?? '',
       system_prompt: input.systemPrompt ?? '', tool_whitelist: JSON.stringify(input.tools ?? []),
-      model: input.model ?? '', max_steps: input.maxSteps ?? 4, updated_at: now(),
+      model: input.model ?? '', max_steps: input.maxSteps ?? config.agent.defaultSteps, updated_at: now(),
     });
     audit(workspaceId, userId, 'agent.create', id, input.name);
     return id;
@@ -144,18 +159,28 @@ export const platformService = {
 
   runs(userId: string, workspaceId: string) {
     requireRole(workspaceId, userId, 'viewer');
-    return rows<{ id: string; status: string; input: string; output: string; steps_count: number; tokens_estimate: number; duration_ms: number; created_at: string }>(
+    return rows<{
+      id: string; status: string; input: string; output: string; steps_count: number;
+      tokens_estimate: number; duration_ms: number; created_at: string;
+      plan_origin: string; revisions: number; stopped_reason: string;
+    }>(
       'agent_runs', 'workspace_id = ?', [workspaceId], 'created_at DESC', 50,
     );
   },
 
   run(userId: string, workspaceId: string, id: string) {
     requireRole(workspaceId, userId, 'viewer');
-    const found = row<{ id: string; status: string; input: string; output: string; created_at: string }>(
+    const found = row<{
+      id: string; status: string; input: string; output: string; created_at: string;
+      plan_json: string; plan_origin: string; revisions: number; stopped_reason: string;
+    }>(
       'agent_runs', 'id = ? AND workspace_id = ?', [id, workspaceId],
     );
     if (!found) throw new NotFoundError('运行记录', id);
-    return { ...found, steps: rows('agent_run_steps', 'run_id = ?', [id], 'step_index ASC') };
+    // plan_json 解析失败不影响详情可读：计划只是附加信息。
+    let plan: unknown = null;
+    try { plan = found.plan_json ? JSON.parse(found.plan_json) : null; } catch { plan = null; }
+    return { ...found, plan, steps: rows('agent_run_steps', 'run_id = ?', [id], 'step_index ASC') };
   },
 
   async searchKnowledge(userId: string, workspaceId: string, query: string) {
@@ -185,9 +210,76 @@ export const platformService = {
     return { embedded, semanticChunks: semanticSize(workspaceId) };
   },
 
-  memories(userId: string, workspaceId: string) {
+  /**
+   * 建/重建向量索引。未配嵌入模型时如实报错而非静默成功——
+   * 没有向量就没有可索引的东西，返回「已建索引 0 条」会误导用户。
+   */
+  buildVectorIndex(userId: string, workspaceId: string, force = false) {
+    requireRole(workspaceId, userId, 'admin');
+    const model = config.llm.embeddingEnabled ? config.llm.embeddingModel : '';
+    if (!model) {
+      throw new BadRequestError('未配置 LLM_EMBEDDING_MODEL，没有语义向量可索引。请先配置嵌入模型并执行向量化');
+    }
+    const built = buildIndex(workspaceId, model, { force });
+    if (!built) {
+      throw new BadRequestError('当前没有已向量化的知识片段。请先调用 /knowledge/embed 生成向量');
+    }
+    audit(workspaceId, userId, 'vector.index', built.centroidId, `${built.buckets} 桶 / ${built.assigned} 片段`);
+    return { ...built, stats: indexStats(workspaceId, model) };
+  },
+
+  vectorIndexStatus(userId: string, workspaceId: string) {
     requireRole(workspaceId, userId, 'viewer');
-    return memoriesService.list(workspaceId, userId);
+    const model = config.llm.embeddingEnabled ? config.llm.embeddingModel : '';
+    const stats = model ? indexStats(workspaceId, model) : null;
+    return {
+      embeddingModel: model,
+      config: {
+        mode: config.vector.mode,
+        autoThreshold: config.vector.autoThreshold,
+        buckets: config.vector.buckets,
+        probes: config.vector.probes,
+      },
+      stats,
+      note: !model
+        ? '未配置嵌入模型，检索走词法路径，无需向量索引。'
+        : stats?.indexed
+          ? `已建索引：${stats.buckets} 桶、${stats.assigned} 片段已归桶；本次检索将走${stats.mode === 'index' ? '索引裁剪' : '全扫（规模未达阈值）'}。`
+          : '尚未建索引，检索走全扫。片段数超过阈值后建议建索引。',
+    };
+  },
+
+  dropVectorIndex(userId: string, workspaceId: string) {
+    requireRole(workspaceId, userId, 'admin');
+    dropIndex(workspaceId);
+    audit(workspaceId, userId, 'vector.index_drop', workspaceId);
+    return { ok: true };
+  },
+
+  memories(userId: string, workspaceId: string, layer?: string) {
+    requireRole(workspaceId, userId, 'viewer');
+    const safeLayer = MEMORY_LAYERS.includes(layer as MemoryLayer) ? layer as MemoryLayer : undefined;
+    return memoriesService.list(workspaceId, userId, safeLayer);
+  },
+
+  memoryLayers(userId: string, workspaceId: string) {
+    requireRole(workspaceId, userId, 'viewer');
+    return memoriesService.layerStatus(workspaceId, userId);
+  },
+
+  clearMemoryLayer(userId: string, workspaceId: string, layer: string) {
+    requireRole(workspaceId, userId, 'member');
+    if (!MEMORY_LAYERS.includes(layer as MemoryLayer)) throw new BadRequestError('未知的记忆层');
+    const removed = memoriesService.clearLayer(workspaceId, userId, layer as MemoryLayer);
+    audit(workspaceId, userId, 'memory.clear_layer', layer, `${removed} 条`);
+    return { removed };
+  },
+
+  purgeMemories(userId: string, workspaceId: string) {
+    requireRole(workspaceId, userId, 'member');
+    const removed = memoriesService.purgeExpired(workspaceId, userId);
+    audit(workspaceId, userId, 'memory.purge', '', `${removed} 条过期`);
+    return { removed };
   },
 
   addMemory(userId: string, workspaceId: string, input: { content: string; kind?: string }) {
@@ -368,32 +460,31 @@ export const platformService = {
     return rows('model_usage', 'workspace_id = ?', [workspaceId], 'created_at DESC', 100);
   },
 
-  registerCustomTool(userId: string, workspaceId: string, input: { name: string; description: string; webhook?: string }) {
-    requireRole(workspaceId, userId, 'admin');
-    if (getTool(input.name)) throw new BadRequestError('同名工具已存在');
-    registerTool({
-      name: input.name, description: input.description, category: 'custom',
-      parameters: { type: 'object', properties: { query: { type: 'string', description: '输入内容' } } },
-      run: async (_ctx, args) => {
-        if (!input.webhook) return `自定义工具 ${input.name} 收到：${String(args.query ?? '')}`;
-        try {
-          const response = await fetch(input.webhook, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(args), signal: AbortSignal.timeout(8000),
-          });
-          return `Webhook 返回 ${response.status}：${(await response.text()).slice(0, 500)}`;
-        } catch (error) { return `Webhook 调用失败：${error instanceof Error ? error.message : String(error)}`; }
-      },
-    });
-    audit(workspaceId, userId, 'tool.register', input.name);
-    return toolManifest().find((item) => item.name === input.name);
+  /**
+   * 旧「注册自定义工具」入口，保留兼容但**改为落库的插件**。
+   *
+   * 旧实现有三个问题，都在此收口：内存 Map 重启即丢、跨工作区可见、
+   * webhook 地址无任何限制且请求体是模型可控参数。现在统一走 pluginsService：
+   * 落库 + 工作区隔离 + 出站闸门（白名单默认空即拒全部）。
+   *
+   * 无 webhook 的「回声工具」不再支持——它没有真实用途，却占用一个工具名。
+   */
+  async registerCustomTool(userId: string, workspaceId: string, input: { name: string; description: string; webhook?: string }) {
+    if (!input.webhook) {
+      throw new BadRequestError('请提供 webhook 地址；自定义工具现在作为插件落库，需指向真实可调用的端点');
+    }
+    const created = pluginsService.create(userId, workspaceId, {
+      name: input.name, description: input.description, endpoint: input.webhook,
+      parameters: { query: { type: 'string', description: '输入内容', required: true } },
+    }, builtinToolNames());
+    return (await toolManifest(workspaceId)).find((item) => item.name === created.name);
   },
 
   async mcp(userId: string, workspaceId: string, request: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> }) {
     requireRole(workspaceId, userId, 'member');
     const id = request.id ?? 1;
     if (request.method === 'tools/list') {
-      return { jsonrpc: '2.0', id, result: { tools: toolManifest().map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.parameters })) } };
+      return { jsonrpc: '2.0', id, result: { tools: (await toolManifest(workspaceId)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.parameters })) } };
     }
     if (request.method === 'tools/call') {
       const params = request.params ?? {};

@@ -25,6 +25,14 @@ depends-on: [shared-kernel, ai-layer, activity, auth]
 - **字数是非空白字符数**：`content.replace(/\s/g, '').length`，创建与更新时各算一次；中文按字、英文按字母，不是词数。
 - **导出靠 `Content-Disposition: filename*=UTF-8''<encoded>`**：文件名里的 `/ \ : * ? " < > |` 被替换成 `_`；HTML 导出走 `shared/markdown.ts` 的 `exportHtml`（自带样式与标题）。
 - **AI Office 走 `shared/office.ts`**：DOCX 导出用 `docx` 库把 Markdown 渲染成标题/列表/表格/代码块；DOCX 导入用 `mammoth` 转受限 HTML 再转 Markdown（只支持 .docx，图片不保留）；PPTX 由 `document.slides` 任务产出 JSON 大纲，解析失败或离线时按文档 H1/H2 结构切分兜底，再用 `pptxgenjs` 渲染。上传与 platform 文件同口径：JSON + base64、解码后 5MB 上限；导入与生成各限流 10 次/分钟。`export` 因此变成 async，控制器要 await。
+- **演示文稿模板库与品牌套件**（`shared/office.ts`）：**9 版式**（bullets/section/twoColumn/table/quote/metrics/timeline/chart/closing）、**7 主题**（ocean/forest/slate/crimson/violet/sand/mono）。`SLIDE_LAYOUTS`/`DECK_THEMES`/`LAYOUT_LABELS`/`THEME_LABELS` 是**单一事实来源**，`deckCatalog()` 经 `GET /api/documents/slides/catalog` 下发给前端，提示词也照它写——不要再各处手抄一份。
+  - **品牌与主题分离**：主题决定色板，`BrandKit` 决定组织名/副标题/页脚/字体/品牌色/Logo。`resolveTokens` 让品牌色覆盖主题色。**用户显式指定的 theme/brand 优先于模型自选**（`documentsService.slides` 里覆盖）。
+  - **缺数据即退回要点页**：声明 quote/metrics/timeline/chart/table/twoColumn 但没给对应数据时一律降级为 bullets，不出空白页。`parseChart` 要求 labels 与 values **等长且为有限数**。
+  - **不编造数字**：metrics 的 value 保留原文字符串（不做数值推断）；提示词明确「文档没有数字就不要用 metrics/chart」；**离线引擎干脆不产出这两种版式**。
+  - **安全**：`normalizeHexColor` 只接受 6 位 hex（挡注入串）；Logo 只接受 `data:image/(png|jpeg);base64,` 格式；字体名与文案都截断。Logo 固定 0.85×0.45 英寸放右上角，有 Logo 时标题宽度收窄以免压图。
+  - **图表是形状绘制的柱状图**，不是 PowerPoint 原生图表对象——在 PowerPoint 里改不了数据源。这是刻意取舍：原生图表 API 在最小类型声明下成本高，形状绘制可控且无溢出风险。
+  - **slides 端点同时接受 GET 与 POST**：前端 `downloadFile` 走 GET，而此前只注册 POST，**界面上的生成按钮实际打不通**，已修。GET 用 `?theme=` 选主题；品牌含 Logo base64 只能走 POST body（`downloadFile` 传 body 时自动改 POST）。
+  - **离线也保留真实表格**：`ai/offline.ts` 的 `documentSlides` 此前把表格压成「A ｜ B」要点，丢掉行列对应；现在收集表格行并在 ≥2 行时升格 table 版式。`markdownToDeck` 本来就有此逻辑，两条路径现已一致。
 
 ## 已知问题
 

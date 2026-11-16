@@ -6,7 +6,8 @@ const TABLES = [
   'workspaces', 'memberships', 'conversations', 'conversation_messages', 'memories',
   'agent_definitions', 'agent_runs', 'agent_run_steps', 'knowledge_chunks',
   'document_shares', 'comments', 'document_versions', 'files', 'automation_events',
-  'audit_logs', 'model_usage', 'workflows',
+  'audit_logs', 'model_usage', 'workflows', 'plugins', 'plugin_runs',
+  'vector_centroids', 'vector_buckets',
 ] as const;
 
 export type TableName = typeof TABLES[number];

@@ -31,6 +31,22 @@ export interface DocumentTemplate {
   id: string; name: string; kind: string; description: string; sections: string[];
 }
 
+/** 演示文稿模板库：版式与主题清单由后端下发，前端不再各写一份。 */
+export interface DeckCatalog {
+  layouts: Array<{ value: string; label: string }>;
+  themes: Array<{ value: string; label: string; cover: string; accent: string }>;
+}
+
+export interface DeckBrand {
+  organization?: string;
+  tagline?: string;
+  footer?: string;
+  fontFace?: string;
+  primaryColor?: string;
+  accentColor?: string;
+  logoDataUri?: string;
+}
+
 export interface ColumnInfo {
   name: string; type: 'numeric' | 'categorical'; missing: number; unique?: number;
   mean?: number; sum?: number; min?: number; max?: number; std?: number;
@@ -132,12 +148,44 @@ export interface PlatformStatus {
   quota: { limit: number; used: number };
   retrieval?: { mode: 'hybrid' | 'lexical'; semanticChunks: number; embeddingModel: string };
   memories?: number;
+  planning?: {
+    planner: boolean; reflect: boolean; maxSteps: number; defaultSteps: number;
+    maxRevisions: number; runTimeoutMs: number;
+  };
+  plugins?: {
+    enabled: boolean; allowedHosts: string[]; allowPrivateNetworks: boolean;
+    count: number; note: string;
+  };
   features: string[];
 }
 
 export interface PlatformMemory {
   id: string; kind: string; content: string; source: string;
   expiresAt: string | null; createdAt: string;
+  layer?: string; layerLabel?: string;
+  conversationId?: string | null; runId?: string | null;
+  hitCount?: number; lastHitAt?: string | null;
+}
+
+/** 四层记忆的配额与用量。 */
+export interface MemoryLayerStatus {
+  layers: Array<{ layer: string; label: string; count: number; cap: number }>;
+  episodicEnabled: boolean;
+  workingTtlMinutes: number;
+  episodicTtlDays: number;
+  recallTotal: number;
+  note: string;
+}
+
+/** 向量索引状态。 */
+export interface VectorIndexStatus {
+  embeddingModel: string;
+  config: { mode: string; autoThreshold: number; buckets: number; probes: number };
+  stats: {
+    mode: 'scan' | 'index'; indexed: boolean; chunks: number; assigned: number;
+    buckets: number; probes: number; imbalance: number; trainedOn: number; updatedAt: string | null;
+  } | null;
+  note: string;
 }
 
 export interface BrowserStatus {
@@ -158,6 +206,22 @@ export interface PlatformTool {
   parameters: { type: 'object'; properties: Record<string, { type: string; description: string }>; required?: string[] };
 }
 
+/** 插件：用户自配的声明式 HTTP 工具。响应不含凭据，只告知是否配了。 */
+export interface PlatformPlugin {
+  id: string; name: string; displayName: string; description: string;
+  kind: string; endpoint: string; method: string;
+  parameters: Record<string, { type: 'string' | 'number' | 'boolean'; description: string; required?: boolean }>;
+  authHeaderName: string; hasToken: boolean;
+  enabled: boolean; confirmedRequired: boolean; timeoutMs: number;
+  status: string; lastCheckedAt: string | null; lastError: string;
+  createdAt: string; updatedAt: string;
+}
+
+export interface PlatformPluginRun {
+  id: string; plugin_id: string; tool_name: string; host: string;
+  status: string; detail: string; duration_ms: number; created_at: string;
+}
+
 export interface PlatformConversation {
   id: string; title: string; created_at: string; updated_at: string; messageCount: number;
 }
@@ -173,13 +237,25 @@ export interface PlatformConversationDetail {
 export interface PlatformRun {
   id: string; status: string; input: string; output: string;
   steps_count: number; tokens_estimate: number; duration_ms: number; created_at: string;
+  plan_origin?: string; revisions?: number; stopped_reason?: string;
+}
+
+/** 运行详情里的计划快照（旧运行记录为 null）。 */
+export interface PlatformRunPlan {
+  goal: string;
+  origin: 'live' | 'rules' | 'fallback';
+  revisions: number;
+  steps: Array<{ id: string; goal: string; tool: string; status: string; result: string }>;
 }
 
 export interface PlatformRunStep {
   id: string; run_id: string; step_index: number; kind: string; tool_name: string; input: string; output: string;
 }
 
-export interface PlatformRunDetail extends PlatformRun { steps: PlatformRunStep[] }
+export interface PlatformRunDetail extends PlatformRun {
+  steps: PlatformRunStep[];
+  plan?: PlatformRunPlan | null;
+}
 
 export interface KnowledgeHit {
   id: string; title: string; content: string; sourceType: string; sourceId: string; score: number;

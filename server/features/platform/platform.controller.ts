@@ -8,9 +8,10 @@ import { platformService } from './platform.service.ts';
 import { assertKeyRole, resolveWorkspace } from './platform.request.ts';
 import {
   agentSchema, apiKeySchema, chatSchema, commentSchema, eventSchema, fileSchema,
-  knowledgeSchema, memberSchema, memorySchema, nameSchema, shareSchema, toolSchema, versionSchema, workflowSchema,
+  knowledgeSchema, memberSchema, memorySchema, nameSchema, pluginSchema, shareSchema, toolSchema, versionSchema, workflowSchema,
 } from './platform.schema.ts';
-import { toolManifest } from './tools.ts';
+import { builtinToolNames, toolManifest } from './tools.ts';
+import { pluginsService } from './plugins.ts';
 import { apiKeyService } from './api-keys.ts';
 
 /**
@@ -25,12 +26,14 @@ import { apiKeyService } from './api-keys.ts';
 export const platformRouter = Router();
 
 platformRouter.get('/status', asyncHandler<AuthenticatedRequest>(async (req, res) => {
-  res.json({ data: platformService.status(currentUserId(req)) });
+  res.json({ data: await platformService.status(currentUserId(req)) });
 }));
 
-platformRouter.get('/tools', (_req, res) => res.json({ data: toolManifest() }));
+platformRouter.get('/tools', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: await toolManifest(resolveWorkspace(req)) });
+}));
 platformRouter.post('/tools', validateBody(toolSchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {
-  res.status(201).json({ data: platformService.registerCustomTool(currentUserId(req), resolveWorkspace(req), req.body) });
+  res.status(201).json({ data: await platformService.registerCustomTool(currentUserId(req), resolveWorkspace(req), req.body) });
 }));
 
 platformRouter.get('/knowledge/search', asyncHandler<AuthenticatedRequest>(async (req, res) => {
@@ -46,8 +49,30 @@ platformRouter.post('/knowledge/embed', rateLimit(10, 60_000), asyncHandler<Auth
   res.json({ data: await platformService.embedKnowledge(currentUserId(req), resolveWorkspace(req)) });
 }));
 
+// —— 向量索引：大库用分桶裁剪替代全扫 ——
+platformRouter.get('/knowledge/index', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: platformService.vectorIndexStatus(currentUserId(req), resolveWorkspace(req)) });
+}));
+platformRouter.post('/knowledge/index', rateLimit(6, 60_000), asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  const force = (req.body ?? {}).force === true;
+  res.json({ data: platformService.buildVectorIndex(currentUserId(req), resolveWorkspace(req), force) });
+}));
+platformRouter.delete('/knowledge/index', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: platformService.dropVectorIndex(currentUserId(req), resolveWorkspace(req)) });
+}));
+
 platformRouter.get('/memories', asyncHandler<AuthenticatedRequest>(async (req, res) => {
-  res.json({ data: platformService.memories(currentUserId(req), resolveWorkspace(req)) });
+  const layer = typeof req.query.layer === 'string' ? req.query.layer : undefined;
+  res.json({ data: platformService.memories(currentUserId(req), resolveWorkspace(req), layer) });
+}));
+platformRouter.get('/memories/layers', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: platformService.memoryLayers(currentUserId(req), resolveWorkspace(req)) });
+}));
+platformRouter.delete('/memories/layers/:layer', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: platformService.clearMemoryLayer(currentUserId(req), resolveWorkspace(req), String(req.params.layer)) });
+}));
+platformRouter.post('/memories/purge', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: platformService.purgeMemories(currentUserId(req), resolveWorkspace(req)) });
 }));
 platformRouter.post('/memories', validateBody(memorySchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {
   res.status(201).json({ data: platformService.addMemory(currentUserId(req), resolveWorkspace(req), req.body) });
@@ -87,6 +112,26 @@ platformRouter.get('/runs', asyncHandler<AuthenticatedRequest>(async (req, res) 
 }));
 platformRouter.get('/runs/:id', asyncHandler<AuthenticatedRequest>(async (req, res) => {
   res.json({ data: platformService.run(currentUserId(req), resolveWorkspace(req), String(req.params.id)) });
+}));
+
+// —— 插件：用户自配的声明式 HTTP 工具，按工作区隔离 ——
+platformRouter.get('/plugins', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: pluginsService.list(currentUserId(req), resolveWorkspace(req)) });
+}));
+platformRouter.post('/plugins', rateLimit(20, 60_000), validateBody(pluginSchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.status(201).json({ data: pluginsService.create(currentUserId(req), resolveWorkspace(req), req.body, builtinToolNames()) });
+}));
+platformRouter.patch('/plugins/:id', validateBody(pluginSchema.partial()), asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: pluginsService.update(currentUserId(req), resolveWorkspace(req), String(req.params.id), req.body, builtinToolNames()) });
+}));
+platformRouter.delete('/plugins/:id', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: pluginsService.remove(currentUserId(req), resolveWorkspace(req), String(req.params.id)) });
+}));
+platformRouter.post('/plugins/:id/test', rateLimit(20, 60_000), asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: await pluginsService.test(currentUserId(req), resolveWorkspace(req), String(req.params.id)) });
+}));
+platformRouter.get('/plugins/runs', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: pluginsService.runs(currentUserId(req), resolveWorkspace(req)) });
 }));
 
 // —— 工作区与成员 ——

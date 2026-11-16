@@ -7,8 +7,9 @@ import { rows } from './store.ts';
 import { search } from './rag.ts';
 import { memoriesService } from './memories.ts';
 import { browserService } from '../browser/browser.service.ts';
+import { pluginsService } from './plugins.ts';
 
-export interface ToolContext { userId: string; workspaceId: string }
+export interface ToolContext { userId: string; workspaceId: string; conversationId?: string }
 export interface ToolArgs { [key: string]: unknown }
 
 export interface Tool {
@@ -125,6 +126,21 @@ const actionTools: Tool[] = [
     },
   },
   {
+    name: 'memory_note',
+    description: '记录只在本次会话内有用的临时信息（如用户本轮临时指定的口径、范围、代号）。带过期时间，不会变成长期偏好。稳定的偏好请用 memory_save。',
+    category: 'action',
+    parameters: {
+      type: 'object',
+      properties: { content: { type: 'string', description: '临时信息，一句话，不超过 200 字' } },
+      required: ['content'],
+    },
+    run: async (ctx, args) => {
+      if (!ctx.conversationId) return '工具执行失败：当前调用没有会话上下文，无法记录会话短期记忆';
+      const created = memoriesService.saveWorking(ctx.workspaceId, ctx.userId, ctx.conversationId, String(args.content ?? ''));
+      return created.deduplicated ? `已更新本次会话的临时信息：${created.content}` : `已记下（仅本次会话有效）：${created.content}`;
+    },
+  },
+  {
     name: 'memory_search', description: '按相关性检索已保存的长期记忆',
     category: 'action',
     parameters: { type: 'object', properties: { query: { type: 'string', description: '检索词' } }, required: ['query'] },
@@ -145,34 +161,61 @@ const actionTools: Tool[] = [
   },
 ];
 
-const customTools = new Map<string, Tool>();
-
-export function registerTool(tool: Tool): void {
-  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(tool.name)) throw new Error('工具名只允许字母、数字、下划线与连字符');
-  customTools.set(tool.name, tool);
+/**
+ * 内置工具名清单：插件注册时用它挡重名。
+ * 单独导出是为了避免 plugins.ts 为了取名字而反向依赖工具执行链。
+ */
+export function builtinToolNames(): string[] {
+  return [...generateTools, ...actionTools].map((tool) => tool.name);
 }
 
-export function allTools(): Tool[] {
-  return [...generateTools, ...actionTools, ...customTools.values()];
+/**
+ * 工具清单。
+ *
+ * **workspaceId 是隔离边界**：不传就只返回内置工具。
+ * 旧实现把自定义工具放在模块级 Map 里无条件并入，导致 A 工作区注册的工具
+ * B 工作区也能调用——那是跨租户泄漏，现已改为按工作区从库加载（见 plugins.ts）。
+ */
+export async function allTools(workspaceId?: string): Promise<Tool[]> {
+  const builtin = [...generateTools, ...actionTools];
+  if (!workspaceId) return builtin;
+  // 内置优先：即使库里出现同名插件（历史数据或手工改库），也不让它顶掉内置工具。
+  const names = new Set(builtin.map((tool) => tool.name));
+  const remote = await pluginsService.toolsFor(workspaceId);
+  const seen = new Set(names);
+  const plugins: Tool[] = [];
+  for (const tool of remote) {
+    // 同一批内也要去重：两个 MCP 插件可能映射出同名本地工具。
+    if (seen.has(tool.name)) continue;
+    seen.add(tool.name);
+    plugins.push(tool);
+  }
+  return [...builtin, ...plugins];
 }
 
-export function getTool(name: string): Tool | undefined {
-  return allTools().find((tool) => tool.name === name || tool.name === name.replace('.', '_'));
+/** 只要内置工具时用这个同步版本，避免为拿名字而触发远端握手。 */
+export function builtinTools(): Tool[] {
+  return [...generateTools, ...actionTools];
 }
 
-export function toolManifest(): Array<{ name: string; description: string; category: string; parameters: Tool['parameters'] }> {
-  return allTools().map(({ name, description, category, parameters }) => ({ name, description, category, parameters }));
+export async function getTool(name: string, workspaceId?: string): Promise<Tool | undefined> {
+  const normalized = name.replace(/\./g, '_');
+  return (await allTools(workspaceId)).find((tool) => tool.name === name || tool.name === normalized);
 }
 
-export function modelToolSchemas(names?: string[]): Array<{ type: 'function'; function: { name: string; description: string; parameters: Tool['parameters'] } }> {
+export async function toolManifest(workspaceId?: string): Promise<Array<{ name: string; description: string; category: string; parameters: Tool['parameters'] }>> {
+  return (await allTools(workspaceId)).map(({ name, description, category, parameters }) => ({ name, description, category, parameters }));
+}
+
+export async function modelToolSchemas(names?: string[], workspaceId?: string): Promise<Array<{ type: 'function'; function: { name: string; description: string; parameters: Tool['parameters'] } }>> {
   const allowed = names?.length ? new Set(names.map((name) => name.replace('.', '_'))) : null;
-  return allTools()
+  return (await allTools(workspaceId))
     .filter((tool) => !allowed || allowed.has(tool.name))
     .map((tool) => ({ type: 'function' as const, function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
 }
 
 export async function executeTool(name: string, ctx: ToolContext, args: ToolArgs): Promise<string> {
-  const tool = getTool(name);
+  const tool = await getTool(name, ctx.workspaceId);
   if (!tool) return `未找到工具：${name}`;
   try { return await tool.run(ctx, args ?? {}); }
   catch (error) { return `工具执行失败：${error instanceof Error ? error.message : String(error)}`; }

@@ -22,3 +22,21 @@ export const importDocxSchema = z.object({
   filename: z.string().min(1, '缺少文件名').max(200),
   contentBase64: z.string().min(1, '文件内容不能为空').max(7_000_000),
 });
+
+/**
+ * 演示文稿生成的可选参数。全部可缺省——不传时行为与旧版一致。
+ * 颜色与 Logo 的格式校验在 shared/office 的 normalizeBrand 里做（单一事实来源），
+ * 这里只限长度，避免超大 base64 撑爆请求。
+ */
+export const slidesSchema = z.object({
+  theme: z.enum(['ocean', 'forest', 'slate', 'crimson', 'violet', 'sand', 'mono']).optional(),
+  brand: z.object({
+    organization: z.string().max(60).optional(),
+    tagline: z.string().max(120).optional(),
+    footer: z.string().max(80).optional(),
+    fontFace: z.string().max(60).optional(),
+    primaryColor: z.string().max(10).optional(),
+    accentColor: z.string().max(10).optional(),
+    logoDataUri: z.string().max(2_000_000).optional(),
+  }).optional(),
+});

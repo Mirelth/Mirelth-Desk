@@ -11,6 +11,7 @@ import { PlatformFiles } from './platform/PlatformFiles.tsx';
 import { PlatformKnowledge } from './platform/PlatformKnowledge.tsx';
 import { PlatformMembers } from './platform/PlatformMembers.tsx';
 import { PlatformMemories } from './platform/PlatformMemories.tsx';
+import { PlatformPlugins } from './platform/PlatformPlugins.tsx';
 import { PlatformBrowser } from './platform/PlatformBrowser.tsx';
 import { PlatformWorkflows } from './platform/PlatformWorkflows.tsx';
 
@@ -19,6 +20,7 @@ const TABS = [
   { value: 'knowledge', label: '知识库' },
   { value: 'memories', label: '记忆' },
   { value: 'agents', label: '智能体' },
+  { value: 'plugins', label: '插件' },
   { value: 'browser', label: '浏览器' },
   { value: 'collab', label: '协作' },
   { value: 'files', label: '文件' },
@@ -98,6 +100,7 @@ export function Platform({ onChanged }: { onChanged?: () => void }) {
       {tab === 'memories' && <PlatformMemories status={status.data} reloadStatus={status.reload} />}
       {tab === 'browser' && <PlatformBrowser />}
       {tab === 'agents' && <PlatformAgents onChanged={onChanged} />}
+      {tab === 'plugins' && <PlatformPlugins onChanged={onChanged} />}
       {tab === 'collab' && <PlatformCollab workspaceId={workspaceId} />}
       {tab === 'files' && <PlatformFiles onChanged={onChanged} />}
       {tab === 'workflows' && <PlatformWorkflows />}

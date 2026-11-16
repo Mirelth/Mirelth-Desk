@@ -14,7 +14,7 @@
     "build": "npm run typecheck && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.server.json && tsc --noEmit -p tsconfig.client.json",
     "start": "node scripts/start.ts",
-    "test": "node --test scripts/regression.test.ts scripts/db.test.ts scripts/http-errors.test.ts scripts/platform.test.ts scripts/activity.test.ts scripts/pagination.test.ts scripts/office.test.ts scripts/roadmap.test.ts",
+    "test": "node --test scripts/regression.test.ts scripts/db.test.ts scripts/http-errors.test.ts scripts/platform.test.ts scripts/activity.test.ts scripts/pagination.test.ts scripts/office.test.ts scripts/roadmap.test.ts scripts/planner.test.ts scripts/planner-live.test.ts scripts/plugins.test.ts scripts/plugins-allowed.test.ts scripts/mcp-client.test.ts scripts/deck.test.ts scripts/vector-index.test.ts scripts/memory-layers.test.ts scripts/memory-episodic.test.ts",
     "smoke": "node scripts/smoke.ts"
   },
   "dependencies": {

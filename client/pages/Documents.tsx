@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiClient, downloadFile, getErrorMessage, readFileAsBase64, streamTask } from '../lib/api.ts';
 import { useLoad, usePaged, useStream } from '../lib/hooks.ts';
-import type { DocumentDto, DocumentTemplate, TaskKind } from '../lib/types.ts';
+import type { DeckBrand, DeckCatalog, DocumentDto, DocumentTemplate, TaskKind } from '../lib/types.ts';
 import {
   AiOutput, Badge, Button, EmptyState, ErrorBanner, Field, Icon, IconButton, MarkdownView, Modal, Segmented,
   Skeleton, formatDate, useToast,
@@ -32,6 +32,10 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
   const [aiLabel, setAiLabel] = useState('');
   const [importing, setImporting] = useState(false);
   const [sliding, setSliding] = useState(false);
+  const [slidesOpen, setSlidesOpen] = useState(false);
+  const [deckTheme, setDeckTheme] = useState('ocean');
+  const [brand, setBrand] = useState<DeckBrand>({});
+  const catalog = useLoad<DeckCatalog>(() => apiClient.get<DeckCatalog>('/api/documents/slides/catalog'));
   const stream = useStream();
 
   useEffect(() => {
@@ -145,11 +149,31 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
     if (!draft || sliding) return;
     setSliding(true);
     try {
-      await downloadFile(`/api/documents/${draft.id}/slides`, `${draft.title}.pptx`);
+      // 只提交填过的品牌字段，空串不传以免覆盖默认页脚。
+      const cleanBrand: DeckBrand = {};
+      for (const [key, value] of Object.entries(brand)) {
+        if (typeof value === 'string' && value.trim()) cleanBrand[key as keyof DeckBrand] = value.trim();
+      }
+      await downloadFile(`/api/documents/${draft.id}/slides`, `${draft.title}.pptx`, {
+        theme: deckTheme,
+        ...(Object.keys(cleanBrand).length ? { brand: cleanBrand } : {}),
+      });
       toast('演示文稿已生成并开始下载', 'success');
+      setSlidesOpen(false);
       onChanged?.();
     } catch (error) { toast(getErrorMessage(error), 'error'); }
     finally { setSliding(false); }
+  };
+
+  const pickLogo = async (file: File) => {
+    if (!/\.(png|jpe?g)$/i.test(file.name)) { toast('Logo 只支持 PNG 或 JPG', 'error'); return; }
+    if (file.size > 500_000) { toast('Logo 请控制在 500KB 以内', 'error'); return; }
+    try {
+      const base64 = await readFileAsBase64(file);
+      const mime = /\.png$/i.test(file.name) ? 'image/png' : 'image/jpeg';
+      setBrand((previous) => ({ ...previous, logoDataUri: `data:${mime};base64,${base64}` }));
+      toast('Logo 已载入', 'success');
+    } catch (error) { toast(getErrorMessage(error), 'error'); }
   };
 
   const applyAi = (mode: 'append' | 'replace') => {
@@ -210,7 +234,7 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
               <IconButton icon="download" title="导出 Markdown" onClick={() => void exportDoc('md')} />
               <IconButton icon="external" title="导出 HTML" onClick={() => void exportDoc('html')} />
               <IconButton icon="file" title="导出 Word (.docx)" onClick={() => void exportDoc('docx')} />
-              <IconButton icon="bolt" title="AI 生成演示文稿 (.pptx)" disabled={sliding} onClick={() => void makeSlides()} />
+              <IconButton icon="bolt" title="AI 生成演示文稿 (.pptx)" disabled={sliding} onClick={() => setSlidesOpen(true)} />
               <IconButton icon="trash" title="删除文档" onClick={() => void remove()} />
               <Button icon="save" loading={saving} onClick={() => void save()}>保存</Button>
             </div>
@@ -260,6 +284,69 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
               </button>
             ))}
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={slidesOpen}
+        onClose={() => setSlidesOpen(false)}
+        title="生成演示文稿"
+        subtitle="选主题与品牌套件；版式由内容性质决定，也可在大纲里指定"
+        footer={<><Button variant="ghost" onClick={() => setSlidesOpen(false)}>取消</Button><Button icon="bolt" loading={sliding} onClick={() => void makeSlides()}>生成并下载</Button></>}
+      >
+        <div className="stack-sm">
+          <Field label="配色主题">
+            <div className="row wrap">
+              {(catalog.data?.themes ?? []).map((theme) => (
+                <button
+                  key={theme.value}
+                  type="button"
+                  className={`btn btn-sm ${deckTheme === theme.value ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setDeckTheme(theme.value)}
+                >
+                  <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: `#${theme.cover}`, marginRight: 6 }} />
+                  {theme.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="可用版式" hint="模型按内容自动选择；指标卡与图表只在文档有真实数字时使用">
+            <div className="text-xs muted">
+              {(catalog.data?.layouts ?? []).map((layout) => layout.label).join('、')}
+            </div>
+          </Field>
+          <Field label="组织名称" hint="出现在封面与页脚，留空用默认">
+            <input className="input" value={brand.organization ?? ''} onChange={(event) => setBrand({ ...brand, organization: event.target.value })} />
+          </Field>
+          <Field label="封面副标题" hint="留空则用页脚文案">
+            <input className="input" value={brand.tagline ?? ''} onChange={(event) => setBrand({ ...brand, tagline: event.target.value })} />
+          </Field>
+          <Field label="页脚文案" hint="留空则用组织名称">
+            <input className="input" value={brand.footer ?? ''} onChange={(event) => setBrand({ ...brand, footer: event.target.value })} />
+          </Field>
+          <Field label="字体" hint="留空用微软雅黑；填本机已安装的字体名">
+            <input className="input" placeholder="Microsoft YaHei" value={brand.fontFace ?? ''} onChange={(event) => setBrand({ ...brand, fontFace: event.target.value })} />
+          </Field>
+          <Field label="品牌色" hint="六位十六进制，可带 #。主色覆盖封面与标题，强调色用于线条与图表">
+            <div className="row">
+              <input className="input grow" placeholder="#1F3A5F" value={brand.primaryColor ?? ''} onChange={(event) => setBrand({ ...brand, primaryColor: event.target.value })} />
+              <input className="input grow" placeholder="#3B82F6" value={brand.accentColor ?? ''} onChange={(event) => setBrand({ ...brand, accentColor: event.target.value })} />
+            </div>
+          </Field>
+          <Field label="Logo" hint="PNG 或 JPG，500KB 以内，放右上角">
+            <div className="row">
+              <input
+                className="input grow"
+                type="file"
+                accept="image/png,image/jpeg"
+                onChange={(event) => { const file = event.target.files?.[0]; if (file) void pickLogo(file); }}
+              />
+              {brand.logoDataUri ? (
+                <Button variant="ghost" size="sm" onClick={() => setBrand({ ...brand, logoDataUri: undefined })}>移除</Button>
+              ) : null}
+            </div>
+          </Field>
+          {brand.logoDataUri ? <img src={brand.logoDataUri} alt="品牌 Logo 预览" style={{ maxHeight: 48, objectFit: 'contain' }} /> : null}
         </div>
       </Modal>
     </div>

@@ -3,6 +3,8 @@ import { embed, embeddingModelName } from '../../ai/provider.ts';
 import { all, run } from '../../shared/database.ts';
 import { logger } from '../../shared/logger.ts';
 import { insertRow, rows, deleteRows, count } from './store.ts';
+import { config } from '../../shared/config.ts';
+import { assignPending, candidateIds, centroidSet, probeBuckets, removeAssignments, shouldUseIndex } from './vector-index.ts';
 
 export interface Chunk {
   id: string; workspace_id: string; source_type: string; source_id: string;
@@ -175,6 +177,8 @@ export function removeSource(workspaceId: string, sourceType: string, sourceId: 
   const previous = rows<{ id: string }>('knowledge_chunks',
     'workspace_id = ? AND source_type = ? AND source_id = ?', [workspaceId, sourceType, sourceId]);
   for (const item of previous) run('DELETE FROM knowledge_fts WHERE chunk_id = ?', item.id);
+  // 桶归属也要成对清理：三张表（chunks / fts / buckets）都没有触发器兜底。
+  removeAssignments(previous.map((item) => item.id));
   deleteRows('knowledge_chunks', 'workspace_id = ? AND source_type = ? AND source_id = ?',
     [workspaceId, sourceType, sourceId]);
 }
@@ -220,7 +224,9 @@ export async function embedPending(workspaceId: string, limit = 256): Promise<nu
       hit.embedding_vec, model, hit.dim, chunk.id);
     updated += 1;
   }
-  logger.info('rag.embedded', { workspace_id: workspaceId, chunks: updated, model });
+  // 已有索引时把新向量增量归桶；没建过索引则不动（建索引是显式动作）。
+  const assigned = assignPending(workspaceId, model, Math.max(limit, 512));
+  logger.info('rag.embedded', { workspace_id: workspaceId, chunks: updated, assigned, model });
   return updated;
 }
 
@@ -267,6 +273,42 @@ function lexicalRecall(workspaceId: string, terms: string[], limit: number): Chu
   return [...candidates.values()];
 }
 
+/** 全扫时的读取上限：没有索引时的兜底，比旧版 2000 提高但仍设界防内存失控。 */
+const SCAN_LIMIT = 50_000;
+
+/**
+ * 取语义候选。
+ *
+ * 有索引且规模够大 → 只读探查到的桶（IVF 裁剪）；否则全扫。
+ * **旧实现在此处硬上限 2000 行**，超过的片段根本参与不了语义召回——
+ * 那是静默丢召回，不只是慢。现在小库全扫上限提到 50000，大库走索引。
+ */
+function semanticCandidates(workspaceId: string, model: string, queryArr: Float32Array): Chunk[] {
+  const total = count('knowledge_chunks',
+    'workspace_id = ? AND embedding_model = ? AND embedding_vec IS NOT NULL', [workspaceId, model]);
+  if (shouldUseIndex(workspaceId, model, queryArr.length, total)) {
+    const set = centroidSet(workspaceId, model, queryArr.length)!;
+    const buckets = probeBuckets(queryArr, set, config.vector.probes);
+    const ids = candidateIds(set.id, buckets);
+    if (!ids.length) return [];
+    const found: Chunk[] = [];
+    // 分批 IN 查询，避免单条 SQL 参数过多。
+    const batch = 400;
+    for (let start = 0; start < ids.length; start += batch) {
+      const slice = ids.slice(start, start + batch);
+      const placeholders = slice.map(() => '?').join(', ');
+      found.push(...all<Chunk>(
+        `SELECT * FROM knowledge_chunks WHERE workspace_id = ? AND embedding_model = ? AND id IN (${placeholders})`,
+        workspaceId, model, ...slice,
+      ));
+    }
+    return found;
+  }
+  return rows<Chunk>('knowledge_chunks',
+    'workspace_id = ? AND embedding_model = ? AND embedding_vec IS NOT NULL',
+    [workspaceId, model], undefined, SCAN_LIMIT);
+}
+
 /**
  * 混合检索：词法（LIKE + FTS5 + 词袋余弦）与语义（向量近邻）两路召回，RRF 融合。
  * 未配置嵌入模型时自动退化为纯词法，行为与旧版一致。
@@ -290,16 +332,14 @@ export async function searchHybrid(workspaceId: string, query: string, limit = 5
     const vectors = await embed([trimmed]);
     const queryVec = vectors?.[0];
     if (queryVec) {
-      const encoded = encodeVector(queryVec);
-      const queryArr = decodeVector(encoded);
-      const stored = rows<Chunk>('knowledge_chunks',
-        'workspace_id = ? AND embedding_model = ? AND embedding_vec IS NOT NULL',
-        [workspaceId, model], undefined, 2000);
+      const queryArr = decodeVector(encodeVector(queryVec));
       if (queryArr) {
+        const stored = semanticCandidates(workspaceId, model, queryArr);
         semanticRanked = stored
           .map((chunk) => {
             const vec = decodeVector(chunk.embedding_vec);
-            return { chunk, score: vec ? dotSimilarity(queryArr, vec) : 0 };
+            // 维度不一致（换过模型但旧行未重算）直接跳过，避免算出无意义的分数。
+            return { chunk, score: vec && vec.length === queryArr.length ? dotSimilarity(queryArr, vec) : 0 };
           })
           .filter((item) => item.score > 0.15)
           .sort((a, b) => b.score - a.score)

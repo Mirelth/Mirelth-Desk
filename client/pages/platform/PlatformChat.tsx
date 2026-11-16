@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiClient, getErrorMessage, streamPlatformChat } from '../../lib/api.ts';
+import { apiClient, getErrorMessage, streamPlatformChat, type PlatformChatEvent } from '../../lib/api.ts';
 import { useLoad } from '../../lib/hooks.ts';
 import type { PlatformConversation, PlatformConversationDetail, PlatformRun, PlatformRunDetail } from '../../lib/types.ts';
 import { Badge, Button, Icon, MarkdownView, Skeleton, formatDate, useToast } from '../../lib/ui.tsx';
@@ -26,6 +26,9 @@ export function PlatformChat({ onChanged }: { onChanged?: () => void }) {
   const [message, setMessage] = useState('');
   const [reply, setReply] = useState('');
   const [steps, setSteps] = useState<string[]>([]);
+  const [plan, setPlan] = useState<NonNullable<PlatformChatEvent['steps']>>([]);
+  const [planGoal, setPlanGoal] = useState('');
+  const [reflection, setReflection] = useState('');
   const [sending, setSending] = useState(false);
 
   const send = async () => {
@@ -34,16 +37,28 @@ export function PlatformChat({ onChanged }: { onChanged?: () => void }) {
     setSending(true);
     setReply('');
     setSteps([]);
+    setPlan([]);
+    setPlanGoal('');
+    setReflection('');
     try {
       await streamPlatformChat(text, selectedConversation ?? undefined, (event) => {
         if (event.type === 'meta') {
           if (event.conversationId) setSelectedConversation(event.conversationId);
+        } else if (event.type === 'plan') {
+          setPlan(event.steps ?? []);
+          setPlanGoal(event.goal ?? '');
         } else if (event.type === 'step') {
           setSteps((previous) => (event.status === 'start'
             ? [...previous, `调用 ${event.tool ?? ''}…`]
             : [...previous.slice(0, -1), `${event.tool ?? ''} 完成`]));
+        } else if (event.type === 'reflect') {
+          const label = event.verdict === 'complete' ? '已达成目标' : event.verdict === 'replan' ? '补充步骤后继续' : '继续执行';
+          setReflection(`${label}${event.reason ? `：${event.reason}` : ''}`);
         } else if (event.type === 'delta') {
           setReply((previous) => previous + (event.text ?? ''));
+        } else if (event.type === 'done') {
+          if (event.stopped === 'step_limit') toast('已达步数上限，先交付当前结果', 'info');
+          else if (event.stopped === 'timeout') toast('已达运行时长上限，先交付当前结果', 'info');
         } else if (event.type === 'error') {
           toast(event.detail ?? '运行失败', 'error');
         }
@@ -85,9 +100,21 @@ export function PlatformChat({ onChanged }: { onChanged?: () => void }) {
               <MarkdownView source={item.content} />
             </div>
           )) : (!detail.loading && <div className="text-xs muted">还没有会话，先在下面发一句试试。</div>)}
-          {(steps.length > 0 || reply) && (
+          {(plan.length > 0 || steps.length > 0 || reply) && (
             <div className="card-pad" style={{ background: 'var(--surface-2)', borderRadius: 10 }}>
+              {plan.length > 0 && (
+                <div className="mb-8">
+                  <div className="text-xs muted mb-8">执行计划{planGoal ? `：${planGoal}` : ''}</div>
+                  {plan.map((item, index) => (
+                    <div key={item.id} className="text-xs muted">
+                      {index + 1}. [{item.status === 'done' ? '已完成' : item.status === 'failed' ? '失败' : '待执行'}] {item.goal}
+                      {item.tool ? `（${item.tool}）` : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
               {steps.map((step, index) => <div key={index} className="text-xs muted">· {step}</div>)}
+              {reflection && <div className="text-xs muted mt-8">审查：{reflection}</div>}
               {reply && <MarkdownView source={reply} className="mt-12" />}
             </div>
           )}
@@ -119,13 +146,27 @@ export function PlatformChat({ onChanged }: { onChanged?: () => void }) {
                   <Badge tone={run.status === 'success' ? 'green' : run.status === 'failed' ? 'rose' : 'neutral'}>{run.status}</Badge>
                   <span className="text-sm grow">{run.input}</span>
                   <span className="text-xs muted">{run.steps_count} 步 · {run.duration_ms}ms</span>
+                  {run.revisions ? <Badge tone="amber">重排 {run.revisions} 次</Badge> : null}
+                  {run.stopped_reason ? <Badge tone="neutral">{run.stopped_reason === 'timeout' ? '超时收尾' : '步数用尽'}</Badge> : null}
                   <Button variant="ghost" size="sm" icon="eye" onClick={() => setOpenRun(openRun === run.id ? null : run.id)}>
                     {openRun === run.id ? '收起' : '详情'}
                   </Button>
                 </div>
                 {openRun === run.id && (
                   <div className="mt-12">
-                    {runDetail.data?.steps?.length ? runDetail.data.steps.map((step) => (
+                    {runDetail.data?.plan?.steps?.length ? (
+                      <div className="mb-8">
+                        <div className="text-xs muted mb-8">
+                          计划（{runDetail.data.plan.origin === 'live' ? '模型规划' : runDetail.data.plan.origin === 'fallback' ? '规划降级' : '离线规则'}）：{runDetail.data.plan.goal}
+                        </div>
+                        {runDetail.data.plan.steps.map((item, index) => (
+                          <div key={item.id} className="text-xs muted">
+                            {index + 1}. [{item.status === 'done' ? '已完成' : item.status === 'failed' ? '失败' : '未执行'}] {item.goal}{item.tool ? `（${item.tool}）` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {runDetail.data?.steps?.filter((step) => step.kind !== 'plan').length ? runDetail.data.steps.filter((step) => step.kind !== 'plan').map((step) => (
                       <div key={step.id} className="text-xs muted mb-8">· [{step.step_index}] {step.tool_name} → {step.output.slice(0, 160)}</div>
                     )) : <div className="text-xs muted">{run.output.slice(0, 400)}</div>}
                   </div>
