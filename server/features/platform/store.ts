@@ -1,6 +1,6 @@
 import { all, get, run } from '../../shared/database.ts';
 import { newId, now } from '../../shared/crypto.ts';
-import { ForbiddenError } from '../../shared/errors.ts';
+import { ForbiddenError, NotFoundError } from '../../shared/errors.ts';
 
 const TABLES = [
   'workspaces', 'memberships', 'conversations', 'conversation_messages', 'memories',
@@ -70,6 +70,9 @@ export function roleOf(workspaceId: string, userId: string): string | null {
 export const ROLE_LEVEL: Record<string, number> = { viewer: 1, member: 2, admin: 3, owner: 4 };
 
 export function requireRole(workspaceId: string, userId: string, minimum: string): void {
+  if (!row('workspaces', 'id = ?', [workspaceId])) {
+    throw new NotFoundError('工作区', workspaceId);
+  }
   const role = roleOf(workspaceId, userId);
   if (!role || (ROLE_LEVEL[role] ?? 0) < (ROLE_LEVEL[minimum] ?? 99)) {
     throw new ForbiddenError('当前工作区权限不足');

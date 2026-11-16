@@ -10,12 +10,16 @@ import { PlatformCollab } from './platform/PlatformCollab.tsx';
 import { PlatformFiles } from './platform/PlatformFiles.tsx';
 import { PlatformKnowledge } from './platform/PlatformKnowledge.tsx';
 import { PlatformMembers } from './platform/PlatformMembers.tsx';
+import { PlatformMemories } from './platform/PlatformMemories.tsx';
+import { PlatformBrowser } from './platform/PlatformBrowser.tsx';
 import { PlatformWorkflows } from './platform/PlatformWorkflows.tsx';
 
 const TABS = [
   { value: 'chat', label: '对话' },
   { value: 'knowledge', label: '知识库' },
+  { value: 'memories', label: '记忆' },
   { value: 'agents', label: '智能体' },
+  { value: 'browser', label: '浏览器' },
   { value: 'collab', label: '协作' },
   { value: 'files', label: '文件' },
   { value: 'workflows', label: '工作流' },
@@ -67,6 +71,10 @@ export function Platform({ onChanged }: { onChanged?: () => void }) {
         </Badge>
         <Badge tone="blue">{status.data?.tools ?? 0} 个工具</Badge>
         <Badge tone="neutral">{formatNumber(status.data?.knowledgeChunks ?? 0)} 个知识片段</Badge>
+        <Badge tone={status.data?.retrieval?.mode === 'hybrid' ? 'green' : 'neutral'}>
+          {status.data?.retrieval?.mode === 'hybrid' ? '语义+词法混合检索' : '词法检索'}
+        </Badge>
+        <Badge tone="neutral">{status.data?.memories ?? 0} 条记忆</Badge>
         <Badge tone="neutral">{status.data?.conversations ?? 0} 个会话</Badge>
         <Badge tone="neutral">{status.data?.runs ?? 0} 次运行</Badge>
         <Badge tone="neutral">{status.data?.members ?? 0} 位成员</Badge>
@@ -87,6 +95,8 @@ export function Platform({ onChanged }: { onChanged?: () => void }) {
 
       {tab === 'chat' && <PlatformChat onChanged={onChanged} />}
       {tab === 'knowledge' && <PlatformKnowledge status={status.data} reloadStatus={status.reload} />}
+      {tab === 'memories' && <PlatformMemories status={status.data} reloadStatus={status.reload} />}
+      {tab === 'browser' && <PlatformBrowser />}
       {tab === 'agents' && <PlatformAgents onChanged={onChanged} />}
       {tab === 'collab' && <PlatformCollab workspaceId={workspaceId} />}
       {tab === 'files' && <PlatformFiles onChanged={onChanged} />}

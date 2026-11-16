@@ -8,7 +8,7 @@ import { platformService } from './platform.service.ts';
 import { assertKeyRole, resolveWorkspace } from './platform.request.ts';
 import {
   agentSchema, apiKeySchema, chatSchema, commentSchema, eventSchema, fileSchema,
-  knowledgeSchema, memberSchema, nameSchema, shareSchema, toolSchema, versionSchema, workflowSchema,
+  knowledgeSchema, memberSchema, memorySchema, nameSchema, shareSchema, toolSchema, versionSchema, workflowSchema,
 } from './platform.schema.ts';
 import { toolManifest } from './tools.ts';
 import { apiKeyService } from './api-keys.ts';
@@ -34,13 +34,26 @@ platformRouter.post('/tools', validateBody(toolSchema), asyncHandler<Authenticat
 }));
 
 platformRouter.get('/knowledge/search', asyncHandler<AuthenticatedRequest>(async (req, res) => {
-  res.json({ data: platformService.searchKnowledge(currentUserId(req), resolveWorkspace(req), String(req.query.q ?? '')) });
+  res.json({ data: await platformService.searchKnowledge(currentUserId(req), resolveWorkspace(req), String(req.query.q ?? '')) });
 }));
 platformRouter.post('/knowledge', validateBody(knowledgeSchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {
-  res.json({ data: platformService.addKnowledge(currentUserId(req), resolveWorkspace(req), req.body) });
+  res.json({ data: await platformService.addKnowledge(currentUserId(req), resolveWorkspace(req), req.body) });
 }));
 platformRouter.post('/knowledge/reindex', asyncHandler<AuthenticatedRequest>(async (req, res) => {
-  res.json({ data: platformService.reindex(currentUserId(req), resolveWorkspace(req)) });
+  res.json({ data: await platformService.reindex(currentUserId(req), resolveWorkspace(req)) });
+}));
+platformRouter.post('/knowledge/embed', rateLimit(10, 60_000), asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: await platformService.embedKnowledge(currentUserId(req), resolveWorkspace(req)) });
+}));
+
+platformRouter.get('/memories', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: platformService.memories(currentUserId(req), resolveWorkspace(req)) });
+}));
+platformRouter.post('/memories', validateBody(memorySchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.status(201).json({ data: platformService.addMemory(currentUserId(req), resolveWorkspace(req), req.body) });
+}));
+platformRouter.delete('/memories/:id', asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.json({ data: await platformService.removeMemory(currentUserId(req), resolveWorkspace(req), String(req.params.id)) });
 }));
 
 platformRouter.get('/conversations', asyncHandler<AuthenticatedRequest>(async (req, res) => {

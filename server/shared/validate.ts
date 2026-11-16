@@ -40,14 +40,3 @@ export function validateBody<T>(schema: ZodType<T>): RequestHandler {
     }
   };
 }
-
-export function validateQuery<T>(schema: ZodType<T>): RequestHandler {
-  return (req: Request, _res, next) => {
-    try {
-      req.query = parse(schema, req.query) as typeof req.query;
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-}

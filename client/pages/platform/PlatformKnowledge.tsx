@@ -51,7 +51,11 @@ export function PlatformKnowledge({ status, reloadStatus }: { status: PlatformSt
     <div className="grid-2">
       <div className="card card-pad">
         <div className="section-head mb-12">
-          <div><h4>知识库</h4><div className="text-xs muted mt-8">检索先走关键词召回，再按余弦相似度排序——不是语义向量检索</div></div>
+          <div><h4>知识库</h4><div className="text-xs muted mt-8">
+            {status?.retrieval?.mode === 'hybrid'
+              ? `语义向量 + 词法混合召回，RRF 融合排序（${status.retrieval.semanticChunks} 个片段已向量化）`
+              : '词法召回 + 余弦排序。配置 LLM_EMBEDDING_MODEL 后自动升级为语义混合检索'}
+          </div></div>
           <Button variant="soft" size="sm" icon="refresh" loading={busy} onClick={() => void reindex()}>重建索引</Button>
         </div>
 

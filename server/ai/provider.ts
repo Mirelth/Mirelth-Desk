@@ -91,6 +91,43 @@ export async function generate(kind: TaskKind, input: AiInput): Promise<{ text: 
   return { text, mode: aiStatus().mode };
 }
 
+/**
+ * 语义嵌入的唯一出口（与 chat 一样只在 provider 发模型请求）。
+ * 未配置密钥或嵌入模型时返回 null——调用方据此降级到词法向量，绝不抛错阻塞检索。
+ */
+export async function embed(texts: string[]): Promise<number[][] | null> {
+  if (!config.llm.embeddingEnabled || !texts.length) return null;
+  try {
+    const response = await fetch(`${config.llm.baseUrl}/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.llm.apiKey}` },
+      body: JSON.stringify({ model: config.llm.embeddingModel, input: texts.map((text) => text.slice(0, 8000)) }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) {
+      logger.warn('ai.embed_upstream_failed', { status: response.status });
+      return null;
+    }
+    const payload = await response.json() as { data?: Array<{ index?: number; embedding?: number[] }> };
+    const items = payload.data ?? [];
+    if (!items.length) return null;
+    const vectors: number[][] = [];
+    for (const item of [...items].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))) {
+      if (!Array.isArray(item.embedding) || !item.embedding.length) return null;
+      vectors.push(item.embedding);
+    }
+    return vectors.length === texts.length ? vectors : null;
+  } catch (error) {
+    // 嵌入失败不是致命错误：检索仍可用词法路径。
+    logger.warn('ai.embed_failed', { error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+
+export function embeddingModelName(): string {
+  return config.llm.embeddingEnabled ? config.llm.embeddingModel : '';
+}
+
 export interface PlatformMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;

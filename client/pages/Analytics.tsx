@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiClient, downloadFile, getErrorMessage, streamTask } from '../lib/api.ts';
+import { apiClient, downloadFile, getErrorMessage, readFileAsBase64, streamTask } from '../lib/api.ts';
 import { useLoad, usePaged, useStream } from '../lib/hooks.ts';
 import type { DatasetDto, DatasetSummary, TaskKind } from '../lib/types.ts';
 import {
@@ -20,6 +20,7 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
   const [csv, setCsv] = useState('');
   const [name, setName] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [xlsxFile, setXlsxFile] = useState<File | null>(null);
   const [aiLabel, setAiLabel] = useState('');
   const stream = useStream();
 
@@ -29,13 +30,18 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
   }, [list.items, selectedId]);
 
   const upload = async () => {
-    if (!csv.trim()) { toast('请先选择 CSV 文件或粘贴内容', 'error'); return; }
+    if (!xlsxFile && !csv.trim()) { toast('请先选择 CSV / XLSX 文件或粘贴内容', 'error'); return; }
     setUploading(true);
     try {
-      const created = await apiClient.post<DatasetDto>('/api/analytics/datasets', { name: name.trim() || undefined, filename, csv });
+      const created = xlsxFile
+        ? await apiClient.post<DatasetDto>('/api/analytics/datasets/xlsx', {
+            name: name.trim() || undefined, filename: xlsxFile.name, contentBase64: await readFileAsBase64(xlsxFile),
+          })
+        : await apiClient.post<DatasetDto>('/api/analytics/datasets', { name: name.trim() || undefined, filename, csv });
       setUploadOpen(false);
       setCsv('');
       setName('');
+      setXlsxFile(null);
       setSelectedId(created.id);
       await list.reload();
       onChanged?.();
@@ -47,10 +53,25 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
 
   const readFile = async (file: File | undefined) => {
     if (!file) return;
-    const content = await file.text();
     setFilename(file.name);
+    if (/\.xlsx$/i.test(file.name)) {
+      setXlsxFile(file);
+      setCsv('');
+      if (!name) setName(file.name.replace(/\.xlsx$/i, ''));
+      return;
+    }
+    setXlsxFile(null);
+    const content = await file.text();
     setCsv(content);
     if (!name) setName(file.name.replace(/\.(csv|txt|tsv)$/i, ''));
+  };
+
+  const exportDataset = async (format: 'csv' | 'xlsx') => {
+    if (!selectedId || !dataset) return;
+    try {
+      await downloadFile(`/api/analytics/datasets/${selectedId}/export${format === 'xlsx' ? '?format=xlsx' : ''}`, `${dataset.name}.${format}`);
+      toast(`已导出 ${format.toUpperCase()}`, 'success');
+    } catch (error) { toast(getErrorMessage(error), 'error'); }
   };
 
   const runAi = async (kind: TaskKind, label: string) => {
@@ -92,9 +113,9 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
   return (
     <div className="page">
       <div className="page-head">
-        <div><h1>数据分析</h1><p>导入 CSV，自动推断字段、计算统计并生成图表与洞察报告</p></div>
+        <div><h1>数据分析</h1><p>导入 CSV / Excel，自动推断字段、计算统计并生成图表与洞察报告</p></div>
         <div className="page-actions">
-          <Button icon="upload" onClick={() => setUploadOpen(true)}>导入 CSV</Button>
+          <Button icon="upload" onClick={() => setUploadOpen(true)}>导入数据</Button>
         </div>
       </div>
 
@@ -128,7 +149,8 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
                 <span className="grow" />
                 <Button variant="outline" size="sm" icon="bolt" disabled={stream.running} onClick={() => void runAi('analytics.insights', '数据洞察')}>AI 洞察</Button>
                 <Button variant="outline" size="sm" icon="file" disabled={stream.running} onClick={() => void runAi('analytics.report', '分析报告')}>分析报告</Button>
-                <Button variant="outline" size="sm" icon="download" onClick={() => void downloadFile(`/api/analytics/datasets/${dataset.id}/export`, `${dataset.name}.csv`).catch((error) => toast(getErrorMessage(error), 'error'))}>导出</Button>
+                <Button variant="outline" size="sm" icon="download" onClick={() => void exportDataset('csv')}>导出 CSV</Button>
+                <Button variant="outline" size="sm" icon="download" onClick={() => void exportDataset('xlsx')}>导出 Excel</Button>
                 <Button variant="danger" size="sm" icon="trash" onClick={() => void remove()}>删除</Button>
               </div>
               <div className="metric-grid">
@@ -197,15 +219,16 @@ export function Analytics({ onChanged }: { onChanged?: () => void }) {
         )}
       </div>
 
-      <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="导入 CSV 数据集" subtitle="文件只在本地解析并保存到本机 SQLite"
+      <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="导入数据集" subtitle="文件只在本地解析并保存到本机 SQLite"
         width={640} footer={<>
-          <Button variant="ghost" onClick={() => setCsv(SAMPLE)}>填入示例</Button>
+          <Button variant="ghost" onClick={() => { setXlsxFile(null); setCsv(SAMPLE); }}>填入示例</Button>
           <Button variant="ghost" onClick={() => setUploadOpen(false)}>取消</Button>
           <Button icon="check" loading={uploading} onClick={() => void upload()}>导入并分析</Button>
         </>}>
-        <Field label="选择文件" hint="支持 .csv / .txt，单次最多 5000 行、8MB">
-          <input className="input" type="file" accept=".csv,.txt,.tsv" onChange={(event) => void readFile(event.target.files?.[0])} />
+        <Field label="选择文件" hint="支持 .csv / .txt / .xlsx（Excel 只读第一个工作表），单次最多 5000 行、5MB">
+          <input className="input" type="file" accept=".csv,.txt,.tsv,.xlsx" onChange={(event) => void readFile(event.target.files?.[0])} />
         </Field>
+        {xlsxFile && <p className="text-sm muted">已选择 Excel 文件：{xlsxFile.name}，导入时服务端解析，下方粘贴区可留空。</p>}
         <div className="form-grid">
           <Field label="数据集名称"><input className="input" value={name} placeholder="留空则使用文件名" onChange={(event) => setName(event.target.value)} /></Field>
           <Field label="文件名"><input className="input" value={filename} onChange={(event) => setFilename(event.target.value)} /></Field>

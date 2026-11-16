@@ -1,5 +1,6 @@
 export type TaskKind =
   | 'document.outline' | 'document.draft' | 'document.polish' | 'document.continue' | 'document.summarize'
+  | 'document.slides'
   | 'analytics.insights' | 'analytics.report'
   | 'paper.summary' | 'paper.review' | 'paper.synthesize'
   | 'research.design' | 'research.interpret' | 'research.plan'
@@ -14,6 +15,7 @@ export const TASK_LABELS: Record<TaskKind, string> = {
   'document.polish': '润色文档',
   'document.continue': '续写文档',
   'document.summarize': '文档摘要',
+  'document.slides': '生成演示文稿大纲',
   'analytics.insights': '数据洞察',
   'analytics.report': '分析报告',
   'paper.summary': '文献摘要',
@@ -40,6 +42,7 @@ const TASK_PROMPTS: Record<TaskKind, string> = {
   'document.polish': '任务：润色用户文档。给出「润色后的完整正文」以及「修改要点」清单；只优化表达、结构与一致性，不改变事实与数据。',
   'document.continue': '任务：承接原文风格继续写 2–3 个段落，保持术语、语气与格式一致。',
   'document.summarize': '任务：提炼文档摘要，输出一句话结论、3–5 个要点、以及可执行的后续事项。',
+  'document.slides': '任务：把文档内容整理成演示文稿大纲，只输出一个 JSON 对象（不要 Markdown、不要代码块围栏）：{"title": "演示标题", "theme": "ocean", "slides": [{"title": "页标题", "layout": "bullets", "bullets": ["要点1", "要点2"]}]}。layout 可选 bullets（要点页）、section（分节页）、twoColumn（双栏对比，需给 "columns": [["左1","左2"],["右1","右2"]]）、table（表格页，需给 "table": [["表头1","表头2"],["值1","值2"]]）。theme 可选 ocean/forest/slate。要求：6–12 页；每页 2–5 条要点，每条不超过 40 字；文档里的表格优先用 table 版式承载；严格基于文档内容，不编造数据；信息不足用「待补充」标注。',
   'analytics.insights': '任务：基于给定统计结果做数据分析。说明数据规模与质量、关键趋势、分组差异、异常或风险，并给出 3 条可执行的建议。所有数值必须来自提供的统计结果。',
   'analytics.report': '任务：撰写数据分析报告，含「分析目标 / 数据概览 / 主要发现 / 结论与建议 / 局限性」。',
   'paper.summary': '任务：基于给定文献元数据，按主题聚类梳理研究脉络，指出共识、分歧与研究空白，并给出阅读优先级建议。',

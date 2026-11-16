@@ -1,10 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { config } from './config.ts';
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type Meta = Record<string, unknown>;
 
 const context = new AsyncLocalStorage<{ requestId: string }>();
-const isProduction = process.env.NODE_ENV === 'production';
+const isProduction = config.isProduction;
 
 /**
  * 内存环形缓冲，只给「日志打包」用：进程重启即清空，不落盘。

@@ -55,6 +55,25 @@ function resolveSecret(isProduction: boolean): string {
   return generated;
 }
 
+/**
+ * 未配置 ADMIN_PASSWORD 时随机生成初始口令并写入 .data/admin-password（0600），
+ * 后续启动复用同一文件；不再使用任何内置默认口令。
+ */
+function resolveAdminPassword(): string {
+  const configured = env('ADMIN_PASSWORD');
+  if (configured) return configured;
+  const dataDir = path.join(ROOT, '.data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  const passwordFile = path.join(dataDir, 'admin-password');
+  if (fs.existsSync(passwordFile)) {
+    const existing = fs.readFileSync(passwordFile, 'utf8').trim();
+    if (existing) return existing;
+  }
+  const generated = crypto.randomBytes(12).toString('base64url');
+  fs.writeFileSync(passwordFile, generated, { mode: 0o600 });
+  return generated;
+}
+
 const nodeEnv = stringValue('NODE_ENV', 'development');
 const isProduction = nodeEnv === 'production';
 
@@ -70,15 +89,39 @@ export const config = {
   secret: resolveSecret(isProduction),
   admin: {
     username: stringValue('ADMIN_USERNAME', 'admin'),
-    password: stringValue('ADMIN_PASSWORD', 'admin123'),
+    password: resolveAdminPassword(),
   },
   llm: {
     baseUrl: stringValue('LLM_BASE_URL', 'https://api.openai.com/v1').replace(/\/$/, ''),
     apiKey: env('LLM_API_KEY') ?? '',
     model: stringValue('LLM_MODEL', 'gpt-4o-mini'),
+    /** 语义检索用的嵌入模型；留空则检索降级为词法向量，不影响可用性。 */
+    embeddingModel: stringValue('LLM_EMBEDDING_MODEL', ''),
     get enabled(): boolean {
       return Boolean(this.apiKey);
     },
+    get embeddingEnabled(): boolean {
+      return Boolean(this.apiKey) && Boolean(this.embeddingModel);
+    },
+  },
+  /** 浏览器自动化：默认关闭。开启后也只允许白名单内的站点，且只连回环调试端口。 */
+  browser: {
+    enabled: stringValue('BROWSER_ENABLED', 'false') === 'true',
+    cdpUrl: stringValue('BROWSER_CDP_URL', 'http://127.0.0.1:9222'),
+    allowedHosts: stringValue('BROWSER_ALLOWED_HOSTS', '')
+      .split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+    maxSteps: intValue('BROWSER_MAX_STEPS', 12),
+    timeoutMs: intValue('BROWSER_TIMEOUT_MS', 30_000),
+  },
+  /** OCR 语言包目录；缺包时默认自动下载并缓存到此目录，之后复用本地文件。 */
+  ocr: {
+    langPath: stringValue('OCR_LANG_PATH', '.data/ocr'),
+    langs: stringValue('OCR_LANGS', 'chi_sim+eng'),
+    /** 设为 false 则只用本地包、缺包报错（内网/无外网环境用）。 */
+    autoDownload: stringValue('OCR_AUTO_DOWNLOAD', 'true') !== 'false',
+    /** 本地加载与首次下载的超时上限；防止 worker 静默挂起把请求悬死。 */
+    initTimeoutMs: intValue('OCR_INIT_TIMEOUT_MS', 60_000),
+    downloadTimeoutMs: intValue('OCR_DOWNLOAD_TIMEOUT_MS', 180_000),
   },
   database: {
     path: path.resolve(ROOT, stringValue('DATABASE_PATH', '.data/mirelth.db')),

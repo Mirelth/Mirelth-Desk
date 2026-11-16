@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiClient, downloadFile, getErrorMessage, streamTask } from '../lib/api.ts';
+import { apiClient, downloadFile, getErrorMessage, readFileAsBase64, streamTask } from '../lib/api.ts';
 import { useLoad, usePaged, useStream } from '../lib/hooks.ts';
 import type { DocumentDto, DocumentTemplate, TaskKind } from '../lib/types.ts';
 import {
@@ -30,6 +30,8 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
   const [newTemplate, setNewTemplate] = useState('general');
   const [creating, setCreating] = useState(false);
   const [aiLabel, setAiLabel] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [sliding, setSliding] = useState(false);
   const stream = useStream();
 
   useEffect(() => {
@@ -116,12 +118,38 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
     } catch (error) { toast(getErrorMessage(error), 'error'); }
   };
 
-  const exportDoc = async (format: 'md' | 'html') => {
+  const exportDoc = async (format: 'md' | 'html' | 'docx') => {
     if (!draft) return;
     try {
       await downloadFile(`/api/documents/${draft.id}/export?format=${format}`, `${draft.title}.${format}`);
       toast(`已导出 ${format.toUpperCase()}`, 'success');
     } catch (error) { toast(getErrorMessage(error), 'error'); }
+  };
+
+  const importDocx = async (file: File | undefined) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const contentBase64 = await readFileAsBase64(file);
+      const created = await apiClient.post<DocumentDto>('/api/documents/import', { filename: file.name, contentBase64 });
+      setSelectedId(created.id);
+      await docs.reload();
+      onChanged?.();
+      const kindLabel = /\.pdf$/i.test(file.name) ? 'PDF' : /\.(png|jpe?g|bmp|webp)$/i.test(file.name) ? '图片（OCR 识别）' : 'Word';
+      toast(`已导入${kindLabel}「${created.title}」`, 'success');
+    } catch (error) { toast(getErrorMessage(error), 'error'); }
+    finally { setImporting(false); }
+  };
+
+  const makeSlides = async () => {
+    if (!draft || sliding) return;
+    setSliding(true);
+    try {
+      await downloadFile(`/api/documents/${draft.id}/slides`, `${draft.title}.pptx`);
+      toast('演示文稿已生成并开始下载', 'success');
+      onChanged?.();
+    } catch (error) { toast(getErrorMessage(error), 'error'); }
+    finally { setSliding(false); }
   };
 
   const applyAi = (mode: 'append' | 'replace') => {
@@ -136,6 +164,11 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
       <div className="page-head">
         <div><h1>文档协作</h1><p>结构化模板 + AI 起草，支持 Markdown 编辑、预览与导出</p></div>
         <div className="page-actions">
+          <Button variant="outline" icon="upload" loading={importing}
+            title="支持 Word (.docx)、PDF、图片（OCR 识别）"
+            onClick={() => document.getElementById('docx-import-input')?.click()}>导入文件</Button>
+          <input id="docx-import-input" type="file" accept=".docx,.pdf,.png,.jpg,.jpeg,.bmp,.webp" style={{ display: 'none' }}
+            onChange={(event) => { void importDocx(event.target.files?.[0]); event.target.value = ''; }} />
           <Button icon="plus" onClick={() => setCreateOpen(true)}>新建文档</Button>
         </div>
       </div>
@@ -176,6 +209,8 @@ export function Documents({ onChanged }: { onChanged?: () => void }) {
               <span className="grow" />
               <IconButton icon="download" title="导出 Markdown" onClick={() => void exportDoc('md')} />
               <IconButton icon="external" title="导出 HTML" onClick={() => void exportDoc('html')} />
+              <IconButton icon="file" title="导出 Word (.docx)" onClick={() => void exportDoc('docx')} />
+              <IconButton icon="bolt" title="AI 生成演示文稿 (.pptx)" disabled={sliding} onClick={() => void makeSlides()} />
               <IconButton icon="trash" title="删除文档" onClick={() => void remove()} />
               <Button icon="save" loading={saving} onClick={() => void save()}>保存</Button>
             </div>

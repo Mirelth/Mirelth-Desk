@@ -5,6 +5,7 @@
  */
 process.env.DATABASE_PATH = '.data/regression-platform.db';
 process.env.APP_SECRET = 'regression-platform-secret-0123456789';
+process.env.ADMIN_PASSWORD = 'admin123';
 
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
@@ -266,4 +267,11 @@ test('MCP：JSON-RPC 直接回协议对象，initialize 与 tools/list 可用', 
   const listed = await post('/api/platform/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
   const tools = (await listed.json() as { result?: { tools?: Array<{ name: string }> } }).result?.tools ?? [];
   assert.ok(tools.length >= 17);
+});
+
+test('requireRole 区分「工作区不存在」(404) 与「权限不足」(403)', async () => {
+  const missing = await post('/api/platform/workspaces/wsp_does_not_exist/keys', { name: '不存在的工作区', role: 'member' });
+  assert.equal(missing.status, 404, `不存在的工作区应回 404，实际 ${missing.status}`);
+  const body = await missing.json() as { title: string };
+  assert.equal(body.title, 'NOT_FOUND');
 });

@@ -5,6 +5,7 @@ import { now } from '../../shared/crypto.ts';
 import { AppError } from '../../shared/errors.ts';
 import { logger } from '../../shared/logger.ts';
 import { contextFor } from './rag.ts';
+import { memoriesService } from './memories.ts';
 import { audit, count, insertRow, row, rows, updateRows, defaultWorkspace } from './store.ts';
 import { executeTool, getTool, modelToolSchemas } from './tools.ts';
 
@@ -69,15 +70,13 @@ export async function* runAgent(input: RunInput): AsyncGenerator<EngineEvent> {
       title: input.message.slice(0, 40) || '新会话', updated_at: now(),
     });
   insertRow('conversation_messages', { conversation_id: conversationId, role: 'user', content: input.message });
-  if (/记住|以后|偏好/.test(input.message)) {
-    insertRow('memories', { workspace_id: workspace, user_id: input.userId, kind: 'preference', content: input.message });
-  }
+  // 记忆不再靠正则自动入库：由 memory_save 工具或用户手动保存（见 memories.ts）。
 
   const history = rows<{ role: string; content: string }>(
     'conversation_messages', 'conversation_id = ?', [conversationId], 'created_at DESC, rowid DESC', 10,
   ).reverse();
-  const memories = rows<{ content: string }>('memories', 'workspace_id = ? AND user_id = ?', [workspace, input.userId], 'created_at DESC', 5);
-  const rag = contextFor(workspace, input.message);
+  const memories = await memoriesService.recall(workspace, input.userId, input.message, 5);
+  const rag = await contextFor(workspace, input.message);
 
   const runId = insertRow('agent_runs', {
     workspace_id: workspace, conversation_id: conversationId, agent_id: agent?.id ?? null,
@@ -95,7 +94,7 @@ export async function* runAgent(input: RunInput): AsyncGenerator<EngineEvent> {
   const system = [
     agent?.system_prompt || '你是 Mirelth 企业办公智能体，使用简体中文，基于事实与工具结果回答，不编造数据。',
     rag ? `\n${rag}` : '',
-    memories.length ? `\n用户长期记忆：\n${memories.map((item) => `- ${item.content}`).join('\n')}` : '',
+    memories.length ? `\n用户长期记忆：\n${memories.map((item) => `- ${item}`).join('\n')}` : '',
   ].join('\n');
 
   try {

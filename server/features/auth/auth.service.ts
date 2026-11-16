@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { config } from '../../shared/config.ts';
 import { hashPassword, newId, now, readSession, signSession, verifyPassword } from '../../shared/crypto.ts';
 import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from '../../shared/errors.ts';
@@ -24,7 +25,12 @@ export const authService = {
       salt,
       created_at: now(),
     });
-    logger.info('auth.admin_created', { username: config.admin.username });
+    logger.info('auth.admin_created', {
+      username: config.admin.username,
+      password_hint: process.env.ADMIN_PASSWORD || undefined
+        ? '使用 ADMIN_PASSWORD 配置的口令登录'
+        : `初始口令已生成，见 ${path.join(config.root, '.data', 'admin-password')}（也可在 .env 配置 ADMIN_PASSWORD 后重建账号）`,
+    });
   },
 
   login(username: string, password: string): { token: string; user: SessionUser; expiresAt: number } {

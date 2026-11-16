@@ -51,7 +51,7 @@ depends-on:
 ## 已上线的能力
 
 - **状态**（`GET /status`）：AI 模式与模型、工具数、知识片段数、会话数、运行数、成员数、当日配额（`limit` / `used`）、能力清单 `features[]`。`features` 是**静态数组**，声明子系统支持什么；现在它与实际挂载一致。
-- **知识库**（`/knowledge/*`）：中文二元切词 → 词袋向量（JSON 存 `embedding`）→ 检索时 LIKE 召回 + fts5 `MATCH` 召回取并集，再按余弦排序。`reindex` 把 7 类本机数据（文档、文献、数据集、邮件、实验、项目、附件）重新灌进索引。
+- **知识库**（`/knowledge/*`）：**混合检索**。词法路＝中文二元切词 + 词袋向量（JSON 存 `embedding`）+ LIKE/fts5 召回后余弦排序；语义路＝`provider.embed` 产出的向量（Float32 小端存 `embedding_vec` BLOB）做近邻。两路用 **RRF 融合**（量纲不同，不能直接相加分数）。未配 `LLM_EMBEDDING_MODEL` 时语义路为空，自动降级纯词法。分块按标题/段落切 700 字带 100 字重叠（`splitChunks`），一个来源多块。`reindex` 把 7 类本机数据重新灌进索引，**附件现在索引正文**（文本类）而不只是文件名；`POST /knowledge/embed` 只补向量不重建词法索引。
 - **会话与运行**（`/conversations`、`/runs`、`POST /chat`）：`runAgent` 是异步生成器，产出 `meta → step* → delta* → done|error`；在线走 `chatWithTools` 多轮工具调用（`max_steps` 夹在 1–8），离线走正则挑选工具。每次运行写一条 `agent_runs` + 若干 `agent_run_steps` + 一条 `model_usage`。
 - **工作流**：`workflows` 存 nodes/edges，执行时**按 nodes 数组顺序**逐节点 `executeTool`，`edges` 被忽略。
 - **事件**：`automation_events` 记录发射；匹配规则见下。
@@ -71,7 +71,8 @@ depends-on:
 
 - **配额只数 `model_usage` 行数，且只有平台在写它**：`/api/agent/generate|run` 与自动化动作都直接调 `ai/provider`、一行不记，所以 `AI_DAILY_LIMIT` 只限平台会话，不是全站 AI 预算。`model_usage` 也没有清理策略。
 - **`knowledge_fts` 与 `knowledge_chunks` 靠代码保持一致**（`indexChunk` 先删后插），没有触发器兜底；绕过 `rag.ts` 直接改表会让两者分叉。
-- **RAG 不是语义检索**：二元切词 + 词袋余弦，召回依赖字面重叠；同义改写会直接丢掉。
+- **RAG 已支持语义检索，但依赖外部嵌入接口**：配了 `LLM_EMBEDDING_MODEL` 才有语义路；没配就仍是字面重叠召回，同义改写会丢。向量近邻是全表扫（单机万级块可接受），规模再大要换存储。`embedPending` 按 `content_hash` 去重批量请求，内容未变不重复付费。
+- **记忆已改为显式保存**：`memories` 由 `memory_save` 工具或 `/memories` 手动写入，归一化去重、上限 500 条、按相关性召回（语义优先、词法兜底、都拿不到才退回最新 3 条）。旧的「正则 `/记住|以后|偏好/` 命中即入库」已删除——那会把随口一句话永久记住。
 - **`reindex` 直接 `SELECT` 七张业务表**：`documents`/`papers`/`datasets`/`messages`/`experiments`/`projects`/`files`——改这些表的列名会静默丢检索内容。
 - **`emitEvent` 绕过 `workspaceService`** 直接读 `automation_tasks`；改那张表结构时两边都要改。
 - **成员管理的前提是账号已存在**：`addMember` 按 `username` 找人，找不到回 404；建号入口在 `/api/auth/users`，且只有安装管理员能用（见 `auth`）。没有邀请、没有自助注册。

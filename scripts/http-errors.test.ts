@@ -9,6 +9,7 @@
  */
 process.env.DATABASE_PATH = '.data/regression-http.db';
 process.env.APP_SECRET = 'regression-http-secret-0123456789';
+process.env.ADMIN_PASSWORD = 'admin123';
 
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';

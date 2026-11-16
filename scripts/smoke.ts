@@ -1,4 +1,16 @@
+import fs from 'node:fs';
+
 const BASE = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:3001';
+
+/** 未显式配置 ADMIN_PASSWORD 时，读取服务端首次启动生成的初始口令。 */
+function adminPassword(): string {
+  if (process.env.ADMIN_PASSWORD) return process.env.ADMIN_PASSWORD;
+  try {
+    const generated = fs.readFileSync('.data/admin-password', 'utf8').trim();
+    if (generated) return generated;
+  } catch { /* 文件不存在时下面给出明确报错 */ }
+  throw new Error('缺少管理员口令：请设置 ADMIN_PASSWORD，或先启动一次服务生成 .data/admin-password');
+}
 
 let cookie = '';
 let passed = 0;
@@ -41,7 +53,7 @@ async function main(): Promise<void> {
 
   const loginResponse = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: process.env.ADMIN_USERNAME ?? 'admin', password: process.env.ADMIN_PASSWORD ?? 'admin123' }),
+    body: JSON.stringify({ username: process.env.ADMIN_USERNAME ?? 'admin', password: adminPassword() }),
   });
   const setCookie = loginResponse.headers.get('set-cookie') ?? '';
   cookie = setCookie.split(';')[0];

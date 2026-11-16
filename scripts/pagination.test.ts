@@ -3,6 +3,7 @@
  */
 process.env.DATABASE_PATH = '.data/regression-paging.db';
 process.env.APP_SECRET = 'regression-paging-secret-0123456789';
+process.env.ADMIN_PASSWORD = 'admin123';
 
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';

@@ -7,7 +7,8 @@ import { BadRequestError, NotFoundError } from '../../shared/errors.ts';
 import { aiStatus } from '../../ai/provider.ts';
 import { documentsService } from '../documents/documents.service.ts';
 import { workspaceService } from '../workspace/workspace.service.ts';
-import { indexChunk, indexSize, reindex, search } from './rag.ts';
+import { embedPending, indexChunk, indexSize, reindex, removeSource, searchHybrid, semanticSize } from './rag.ts';
+import { memoriesService } from './memories.ts';
 import { audit, count, defaultWorkspace, deleteRows, insertRow, requireRole, row, rows, updateRows, ROLE_LEVEL } from './store.ts';
 import { allTools, executeTool, getTool, registerTool, toolManifest } from './tools.ts';
 
@@ -33,8 +34,15 @@ export const platformService = {
         limit: DAILY_LIMIT,
         used: count('model_usage', 'user_id = ? AND created_at LIKE ?', [userId, `${today}%`]),
       },
-      features: ['tool_calls', 'rag_fts5_vector', 'conversations', 'memory', 'workspaces', 'shares',
-        'comments', 'versions', 'files', 'events', 'audit', 'quota', 'workflows', 'mcp'],
+      retrieval: {
+        mode: semanticSize(workspace.id) > 0 ? 'hybrid' : 'lexical',
+        semanticChunks: semanticSize(workspace.id),
+        embeddingModel: config.llm.embeddingEnabled ? config.llm.embeddingModel : '',
+      },
+      memories: memoriesService.count(workspace.id, userId),
+      features: ['tool_calls', 'rag_hybrid', 'conversations', 'memory', 'workspaces', 'shares',
+        'comments', 'versions', 'files', 'events', 'audit', 'quota', 'workflows', 'mcp',
+        'pdf_import', 'ocr', 'browser_automation'],
     };
   },
 
@@ -150,21 +158,50 @@ export const platformService = {
     return { ...found, steps: rows('agent_run_steps', 'run_id = ?', [id], 'step_index ASC') };
   },
 
-  searchKnowledge(userId: string, workspaceId: string, query: string) {
+  async searchKnowledge(userId: string, workspaceId: string, query: string) {
     requireRole(workspaceId, userId, 'viewer');
-    return search(workspaceId, query, 8);
+    const { hits } = await searchHybrid(workspaceId, query, 8);
+    return hits;
   },
 
-  addKnowledge(userId: string, workspaceId: string, input: { title: string; content: string; sourceType?: string }) {
+  async addKnowledge(userId: string, workspaceId: string, input: { title: string; content: string; sourceType?: string }) {
     requireRole(workspaceId, userId, 'member');
     indexChunk(workspaceId, input.sourceType ?? 'manual', newId('knw'), input.title, input.content);
+    await embedPending(workspaceId, 64);
     audit(workspaceId, userId, 'knowledge.add', '', input.title);
-    return { chunks: indexSize(workspaceId) };
+    return { chunks: indexSize(workspaceId), semanticChunks: semanticSize(workspaceId) };
   },
 
-  reindex(userId: string, workspaceId: string) {
+  async reindex(userId: string, workspaceId: string) {
     requireRole(workspaceId, userId, 'admin');
-    return { chunks: reindex(workspaceId, userId) };
+    const chunks = await reindex(workspaceId, userId);
+    return { chunks, semanticChunks: semanticSize(workspaceId) };
+  },
+
+  /** 只补语义向量，不重建词法索引——配好嵌入模型后用它把存量内容向量化。 */
+  async embedKnowledge(userId: string, workspaceId: string) {
+    requireRole(workspaceId, userId, 'admin');
+    const embedded = await embedPending(workspaceId, 1024);
+    return { embedded, semanticChunks: semanticSize(workspaceId) };
+  },
+
+  memories(userId: string, workspaceId: string) {
+    requireRole(workspaceId, userId, 'viewer');
+    return memoriesService.list(workspaceId, userId);
+  },
+
+  addMemory(userId: string, workspaceId: string, input: { content: string; kind?: string }) {
+    requireRole(workspaceId, userId, 'member');
+    const created = memoriesService.save(workspaceId, userId, input.content, input.kind ?? 'preference', 'manual');
+    audit(workspaceId, userId, 'memory.add', created.id, input.content.slice(0, 80));
+    return created;
+  },
+
+  async removeMemory(userId: string, workspaceId: string, id: string) {
+    requireRole(workspaceId, userId, 'member');
+    memoriesService.remove(workspaceId, userId, id);
+    audit(workspaceId, userId, 'memory.remove', id);
+    return { ok: true };
   },
 
   shares(userId: string, workspaceId: string, documentId?: string) {
@@ -240,7 +277,10 @@ export const platformService = {
     const filePath = path.join(filesDir(), id);
     fs.writeFileSync(filePath, buffer);
     insertRow('files', { id, workspace_id: workspaceId, user_id: userId, filename: safeName, mime: input.mime || 'application/octet-stream', size: buffer.length, path: filePath });
-    indexChunk(workspaceId, 'file', id, safeName, safeName);
+    // 文本类附件索引正文（此前只索引文件名，内容搜不到）；二进制留给 PDF/OCR 流程。
+    const textual = /\.(txt|md|csv|json|log|tsv|html?)$/i.test(safeName) || /^(text\/|application\/(json|csv))/.test(input.mime ?? '');
+    const body = textual ? `${safeName}\n${buffer.toString('utf8').slice(0, 20_000)}` : safeName;
+    indexChunk(workspaceId, 'file', id, safeName, body);
     audit(workspaceId, userId, 'file.upload', id, safeName);
     return { id, filename: safeName, size: buffer.length };
   },
@@ -256,6 +296,7 @@ export const platformService = {
     requireRole(workspaceId, userId, 'member');
     const file = row<{ path: string }>('files', 'id = ? AND workspace_id = ?', [id, workspaceId]);
     if (file) { try { fs.unlinkSync(file.path); } catch { /* 文件已不存在 */ } }
+    removeSource(workspaceId, 'file', id);
     deleteRows('files', 'id = ? AND workspace_id = ?', [id, workspaceId]);
     audit(workspaceId, userId, 'file.delete', id);
   },

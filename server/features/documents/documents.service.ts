@@ -1,10 +1,24 @@
 import type { TaskKind } from '../../ai/prompts.ts';
 import { generate } from '../../ai/provider.ts';
 import { newId, now } from '../../shared/crypto.ts';
-import { NotFoundError } from '../../shared/errors.ts';
+import { BadRequestError, NotFoundError } from '../../shared/errors.ts';
 import { exportHtml } from '../../shared/markdown.ts';
+import {
+  OFFICE_MIME, decodeBase64File, deckToPptx, docxToMarkdown, markdownToDeck, markdownToDocx, parseDeckJson,
+} from '../../shared/office.ts';
+import { pdfToMarkdown } from '../../shared/pdf.ts';
+import { recognizeImage } from '../../shared/ocr.ts';
 import { activityService } from '../activity/activity.service.ts';
+import { indexChunk, removeSource } from '../platform/rag.ts';
+import { defaultWorkspace } from '../platform/store.ts';
 import { documentsRepository, type DocumentRow } from './documents.repository.ts';
+
+/** 增量索引：文档改动后立即刷新自己的检索块，不必等用户手动重建。失败不影响主流程。 */
+function reindexDoc(userId: string, id: string, title: string, content: string): void {
+  try {
+    indexChunk(defaultWorkspace(userId).id, 'document', id, title, content);
+  } catch { /* 索引失败不应让写入失败 */ }
+}
 
 export interface DocumentTemplate {
   id: string;
@@ -78,6 +92,7 @@ export const documentsService = {
       createdAt: now(),
     });
     activityService.record(userId, 'document', 'create', `创建文档「${input.title}」`);
+    reindexDoc(userId, id, input.title, input.content ?? '');
     return this.get(userId, id);
   },
 
@@ -91,12 +106,15 @@ export const documentsService = {
       status: input.status,
     });
     activityService.record(userId, 'document', 'update', `更新文档「${input.title ?? id}」`);
-    return this.get(userId, id);
+    const updated = this.get(userId, id);
+    reindexDoc(userId, id, updated.title, updated.content);
+    return updated;
   },
 
   remove(userId: string, id: string): void {
     this.get(userId, id);
     documentsRepository.remove(userId, id);
+    try { removeSource(defaultWorkspace(userId).id, 'document', id); } catch { /* 索引清理失败不影响删除 */ }
     activityService.record(userId, 'document', 'delete', `删除文档 ${id}`);
   },
 
@@ -115,11 +133,72 @@ export const documentsService = {
     return { ...result, action };
   },
 
-  export(userId: string, id: string, format: 'md' | 'html') {
+  async export(userId: string, id: string, format: 'md' | 'html' | 'docx') {
     const doc = this.get(userId, id);
     const safeName = doc.title.replace(/[\\/:*?"<>|]/g, '_');
+    if (format === 'docx') {
+      activityService.record(userId, 'document', 'export', `导出 Word「${doc.title}」`);
+      return { filename: `${safeName}.docx`, content: await markdownToDocx(doc.title, doc.content), mime: OFFICE_MIME.docx };
+    }
     return format === 'html'
       ? { filename: `${safeName}.html`, content: exportHtml(doc.title, doc.content), mime: 'text/html' }
       : { filename: `${safeName}.md`, content: doc.content, mime: 'text/markdown' };
+  },
+
+  /** 统一导入入口：按扩展名分派 Word / PDF / 图片（OCR）。 */
+  async importFile(userId: string, input: { filename: string; contentBase64: string }) {
+    if (/\.docx$/i.test(input.filename)) return this.importDocx(userId, input);
+    if (/\.pdf$/i.test(input.filename)) return this.importPdf(userId, input);
+    if (/\.(png|jpe?g|bmp|webp|gif)$/i.test(input.filename)) return this.importImage(userId, input);
+    throw new BadRequestError('支持 .docx / .pdf / 图片（png、jpg、bmp、webp）；旧版 .doc 请先另存为 .docx');
+  },
+
+  async importDocx(userId: string, input: { filename: string; contentBase64: string }) {
+    if (!/\.docx$/i.test(input.filename)) throw new BadRequestError('仅支持 .docx 文件（旧版 .doc 请先另存为 .docx）');
+    const buffer = decodeBase64File(input.contentBase64, 'Word 文件');
+    const { markdown } = await docxToMarkdown(buffer);
+    if (markdown.length > 200_000) throw new BadRequestError('导入内容超过 20 万字符上限，请拆分文档');
+    const title = input.filename.replace(/\.docx$/i, '').slice(0, 200) || '导入的文档';
+    return this.create(userId, { title, content: markdown, kind: 'general' });
+  },
+
+  async importPdf(userId: string, input: { filename: string; contentBase64: string }) {
+    const buffer = decodeBase64File(input.contentBase64, 'PDF 文件');
+    const { markdown, pages, needsOcr } = await pdfToMarkdown(buffer);
+    const title = input.filename.replace(/\.pdf$/i, '').slice(0, 200) || '导入的 PDF';
+    if (needsOcr) {
+      throw new BadRequestError(
+        `该 PDF（${pages} 页）没有可提取的文本层，可能是扫描件。请先转成图片再用图片导入走 OCR 识别`,
+      );
+    }
+    if (markdown.length > 200_000) throw new BadRequestError('导入内容超过 20 万字符上限，请拆分文档');
+    const doc = this.create(userId, { title, content: markdown, kind: 'general' });
+    return { ...doc, pages };
+  },
+
+  /** 图片 → OCR → 文档。识别结果标注来源与置信度，遵守「不编造」原则。 */
+  async importImage(userId: string, input: { filename: string; contentBase64: string }) {
+    // 语言包缺失时由 ocr 层自动下载并缓存（OCR_AUTO_DOWNLOAD=false 时才报错）。
+    const buffer = decodeBase64File(input.contentBase64, '图片文件');
+    const { text, confidence } = await recognizeImage(buffer);
+    if (!text) throw new BadRequestError('没有识别到文字，请确认图片清晰且包含文本');
+    const title = input.filename.replace(/\.[^.]+$/, '').slice(0, 200) || '识别的图片';
+    const content = [
+      `# ${title}`, '',
+      `> 来源：OCR 识别（${input.filename}）｜置信度 ${confidence}%｜机器识别结果，请人工核对后再引用。`, '',
+      text,
+    ].join('\n');
+    return this.create(userId, { title, content, kind: 'general' });
+  },
+
+  /** AI Office：文档 → 演示文稿。模型输出 JSON 大纲，解析失败或离线时按文档标题结构切分兜底。 */
+  async slides(userId: string, id: string) {
+    const doc = this.get(userId, id);
+    const result = await generate('document.slides', { title: doc.title, content: doc.content });
+    const deck = parseDeckJson(result.text) ?? markdownToDeck(doc.title, doc.content);
+    const buffer = await deckToPptx(deck);
+    activityService.record(userId, 'agent', 'document_slides', `为「${doc.title}」生成演示文稿（${deck.slides.length} 页）`);
+    const safeName = doc.title.replace(/[\\/:*?"<>|]/g, '_');
+    return { filename: `${safeName}.pptx`, content: buffer, mime: OFFICE_MIME.pptx, slides: deck.slides.length, mode: result.mode };
   },
 };

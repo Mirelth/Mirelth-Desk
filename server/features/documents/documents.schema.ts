@@ -17,3 +17,8 @@ export const aiSchema = z.object({
   action: z.enum(['outline', 'draft', 'polish', 'continue', 'summarize']),
   points: z.array(z.string().max(200)).max(20).optional().default([]),
 });
+
+export const importDocxSchema = z.object({
+  filename: z.string().min(1, '缺少文件名').max(200),
+  contentBase64: z.string().min(1, '文件内容不能为空').max(7_000_000),
+});

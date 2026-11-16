@@ -147,6 +147,16 @@ export async function downloadFile(path: string, fallback: string): Promise<void
   URL.revokeObjectURL(url);
 }
 
+/** 读取本地文件为 base64（与 platform 文件上传同口径），用于 DOCX/XLSX 导入。 */
+export function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401) return '登录已失效，请重新登录。';

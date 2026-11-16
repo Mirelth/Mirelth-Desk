@@ -19,6 +19,11 @@ export const knowledgeSchema = z.object({
   title: z.string().min(1).max(200), content: z.string().min(1).max(20_000), sourceType: z.string().max(40).optional(),
 });
 
+export const memorySchema = z.object({
+  content: z.string().min(1, '记忆内容不能为空').max(2000),
+  kind: z.enum(['preference', 'fact', 'project']).optional().default('preference'),
+});
+
 export const shareSchema = z.object({
   documentId: z.string().min(1), targetUserId: z.string().min(1), permission: z.enum(['read', 'comment', 'edit']).optional().default('read'),
 });

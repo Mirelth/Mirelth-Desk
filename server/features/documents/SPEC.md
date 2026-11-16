@@ -9,7 +9,7 @@ depends-on: [shared-kernel, ai-layer, activity, auth]
 
 ## 职责
 
-文档的增删改查与搜索、6 类办公模板、5 个 AI 动作（大纲/起草/润色/续写/摘要）、以及 Markdown / HTML 导出。AI 只产出文本，**不落库**——落库由调用方决定（前端拿到结果后自己 `PATCH`，自动化任务则调 `create` 存成新文档）。
+文档的增删改查与搜索、6 类办公模板、5 个 AI 动作（大纲/起草/润色/续写/摘要）、Markdown / HTML / DOCX 导出、DOCX 导入，以及 AI 生成演示文稿（PPTX）。AI 只产出文本，**不落库**——落库由调用方决定（前端拿到结果后自己 `PATCH`，自动化任务则调 `create` 存成新文档）。唯一例外是 `POST /import`：它把解析出的 Markdown 直接 `create` 成新文档。
 
 ## 边界
 
@@ -24,6 +24,7 @@ depends-on: [shared-kernel, ai-layer, activity, auth]
 - **AI 的输入组装方式（服务端这条）**：`title` + 模板名（或 `kind`）+ 模板章节 + 现有正文 + 用户勾选的 `points`，整包交给 `generate`。所以 AI 的输出质量取决于「文档有没有按模板填章节」；前端那条同形但回退值不同，见上一条。
 - **字数是非空白字符数**：`content.replace(/\s/g, '').length`，创建与更新时各算一次；中文按字、英文按字母，不是词数。
 - **导出靠 `Content-Disposition: filename*=UTF-8''<encoded>`**：文件名里的 `/ \ : * ? " < > |` 被替换成 `_`；HTML 导出走 `shared/markdown.ts` 的 `exportHtml`（自带样式与标题）。
+- **AI Office 走 `shared/office.ts`**：DOCX 导出用 `docx` 库把 Markdown 渲染成标题/列表/表格/代码块；DOCX 导入用 `mammoth` 转受限 HTML 再转 Markdown（只支持 .docx，图片不保留）；PPTX 由 `document.slides` 任务产出 JSON 大纲，解析失败或离线时按文档 H1/H2 结构切分兜底，再用 `pptxgenjs` 渲染。上传与 platform 文件同口径：JSON + base64、解码后 5MB 上限；导入与生成各限流 10 次/分钟。`export` 因此变成 async，控制器要 await。
 
 ## 已知问题
 

@@ -2,6 +2,7 @@ export type PageId = 'dashboard' | 'documents' | 'analytics' | 'papers' | 'resea
 
 export type TaskKind =
   | 'document.outline' | 'document.draft' | 'document.polish' | 'document.continue' | 'document.summarize'
+  | 'document.slides'
   | 'analytics.insights' | 'analytics.report' | 'paper.summary' | 'paper.review' | 'paper.synthesize'
   | 'research.design' | 'research.interpret' | 'research.plan' | 'mail.reply' | 'mail.summary' | 'mail.compose'
   | 'agent.chat';
@@ -129,8 +130,26 @@ export interface PlatformStatus {
   runs: number;
   members: number;
   quota: { limit: number; used: number };
+  retrieval?: { mode: 'hybrid' | 'lexical'; semanticChunks: number; embeddingModel: string };
+  memories?: number;
   features: string[];
 }
+
+export interface PlatformMemory {
+  id: string; kind: string; content: string; source: string;
+  expiresAt: string | null; createdAt: string;
+}
+
+export interface BrowserStatus {
+  enabled: boolean; cdpUrl: string; allowedHosts: string[]; maxSteps: number;
+  sensitiveActions: string[]; note: string;
+}
+
+export interface BrowserRun {
+  id: string; action: string; target: string; status: string; detail: string; created_at: string;
+}
+
+export interface BrowserResult { ok: boolean; text: string; screenshotBase64?: string; url?: string }
 
 export interface PlatformTool {
   name: string;
@@ -164,6 +183,7 @@ export interface PlatformRunDetail extends PlatformRun { steps: PlatformRunStep[
 
 export interface KnowledgeHit {
   id: string; title: string; content: string; sourceType: string; sourceId: string; score: number;
+  mode?: 'hybrid' | 'lexical';
 }
 
 export interface PlatformWorkspace {

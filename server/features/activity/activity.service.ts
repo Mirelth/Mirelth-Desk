@@ -2,7 +2,7 @@ import { all, get, run } from '../../shared/database.ts';
 import { newId, now } from '../../shared/crypto.ts';
 import { config } from '../../shared/config.ts';
 
-export type ActivityModule = 'document' | 'analytics' | 'paper' | 'research' | 'mail' | 'agent' | 'system';
+export type ActivityModule = 'document' | 'analytics' | 'paper' | 'research' | 'mail' | 'agent' | 'system' | 'browser';
 
 export interface ActivityRow {
   id: string;

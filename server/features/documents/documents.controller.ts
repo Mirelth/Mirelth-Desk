@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler, pageQuery, type AuthenticatedRequest } from '../../shared/http.ts';
+import { asyncHandler, pageQuery, rateLimit, type AuthenticatedRequest } from '../../shared/http.ts';
 import { validateBody } from '../../shared/validate.ts';
 import { currentUserId } from '../auth/auth.middleware.ts';
 import { DOCUMENT_TEMPLATES, documentsService } from './documents.service.ts';
-import { aiSchema, createSchema, updateSchema } from './documents.schema.ts';
+import { aiSchema, createSchema, importDocxSchema, updateSchema } from './documents.schema.ts';
 
 export const documentsRouter = Router();
 
@@ -19,6 +19,10 @@ documentsRouter.get('/', asyncHandler<AuthenticatedRequest>(async (req, res) => 
 
 documentsRouter.post('/', validateBody(createSchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {
   res.status(201).json({ data: documentsService.create(currentUserId(req), req.body) });
+}));
+
+documentsRouter.post('/import', rateLimit(10, 60_000), validateBody(importDocxSchema), asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  res.status(201).json({ data: await documentsService.importFile(currentUserId(req), req.body) });
 }));
 
 documentsRouter.get('/:id', asyncHandler<AuthenticatedRequest>(async (req, res) => {
@@ -40,8 +44,16 @@ documentsRouter.post('/:id/ai', validateBody(aiSchema), asyncHandler<Authenticat
 }));
 
 documentsRouter.get('/:id/export', asyncHandler<AuthenticatedRequest>(async (req, res) => {
-  const format = req.query.format === 'html' ? 'html' : 'md';
-  const result = documentsService.export(currentUserId(req), String(req.params.id), format);
+  const format = req.query.format === 'html' ? 'html' : req.query.format === 'docx' ? 'docx' : 'md';
+  const result = await documentsService.export(currentUserId(req), String(req.params.id), format);
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+  res.type(result.mime).send(result.content);
+}));
+
+documentsRouter.post('/:id/slides', rateLimit(10, 60_000), asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  const result = await documentsService.slides(currentUserId(req), String(req.params.id));
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+  res.setHeader('X-Slide-Count', String(result.slides));
+  res.setHeader('X-Ai-Mode', result.mode);
   res.type(result.mime).send(result.content);
 }));

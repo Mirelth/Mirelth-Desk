@@ -355,6 +355,43 @@ function agentChat(input: AiInput): string {
   ].join('\n');
 }
 
+/** 离线演示大纲：直接按文档自身的标题结构切分，不添加任何文档之外的内容。 */
+function documentSlides(input: AiInput): string {
+  const title = text(input, 'title', '未命名文档');
+  const content = text(input, 'content');
+  const slides: Array<{ title: string; bullets: string[] }> = [];
+  let current: { title: string; bullets: string[] } | null = null;
+  const push = (value: string): void => {
+    if (current && value && current.bullets.length < 6) current.bullets.push(clip(value, 60));
+  };
+  for (const raw of content.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('```')) continue;
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      if (heading[1].length <= 2) {
+        current = { title: clip(heading[2].replace(/[*`]/g, ''), 40), bullets: [] };
+        slides.push(current);
+      } else push(heading[2].replace(/[*`]/g, ''));
+      continue;
+    }
+    if (!current) { current = { title: '概述', bullets: [] }; slides.push(current); }
+    if (/^[-*]\s+/.test(line)) push(line.replace(/^[-*]\s+/, '').replace(/[*`]/g, ''));
+    else if (/^\d+\.\s+/.test(line)) push(line.replace(/[*`]/g, ''));
+    else if (/^\|.*\|$/.test(line)) {
+      const cells = line.slice(1, -1).split('|').map((cell) => cell.trim());
+      if (!cells.every((cell) => /^:?-{2,}:?$/.test(cell))) push(cells.join(' ｜ '));
+    } else if (!line.startsWith('>')) push(line.replace(/[*`]/g, ''));
+  }
+  const usable = slides.filter((slide) => slide.bullets.length || slide.title !== '概述').slice(0, 12);
+  if (!usable.length) usable.push({ title: clip(title, 40), bullets: ['文档暂无正文，请先补充内容再生成演示'] });
+  return JSON.stringify({
+    title: clip(title, 60),
+    theme: 'ocean',
+    slides: usable.map((slide) => ({ ...slide, layout: 'bullets' })),
+  });
+}
+
 export function offlineGenerate(kind: TaskKind, input: AiInput): string {
   switch (kind) {
     case 'document.outline': return documentOutline(input);
@@ -362,6 +399,7 @@ export function offlineGenerate(kind: TaskKind, input: AiInput): string {
     case 'document.polish': return documentPolish(input);
     case 'document.continue': return documentContinue(input);
     case 'document.summarize': return documentSummarize(input);
+    case 'document.slides': return documentSlides(input);
     case 'analytics.insights': return analyticsInsights(input);
     case 'analytics.report': return analyticsInsights(input).replace('## ', '## 分析报告 · ');
     case 'paper.summary': return paperSynthesis(input, 'summary');

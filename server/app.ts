@@ -21,6 +21,7 @@ import { platformRouter } from './features/platform/platform.controller.ts';
 import { apiKeyMiddleware } from './features/platform/platform.auth.ts';
 import { automationRouter, connectorsRouter } from './features/workspace/workspace.controller.ts';
 import { systemRouter } from './features/system/system.controller.ts';
+import { browserRouter } from './features/browser/browser.controller.ts';
 
 export function createApp(): Express {
   const app = express();
@@ -60,6 +61,7 @@ export function createApp(): Express {
   app.use('/api/connectors', connectorsRouter);
   app.use('/api/platform', platformRouter);
   app.use('/api/system', systemRouter);
+  app.use('/api/browser', browserRouter);
 
   app.use('/api', (_req, res) => {
     sendError(res, 404, 'NOT_FOUND', '接口不存在');

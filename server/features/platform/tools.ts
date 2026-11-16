@@ -5,6 +5,8 @@ import { mailService } from '../mail/mail.service.ts';
 import { workspaceService } from '../workspace/workspace.service.ts';
 import { rows } from './store.ts';
 import { search } from './rag.ts';
+import { memoriesService } from './memories.ts';
+import { browserService } from '../browser/browser.service.ts';
 
 export interface ToolContext { userId: string; workspaceId: string }
 export interface ToolArgs { [key: string]: unknown }
@@ -102,6 +104,43 @@ const actionTools: Tool[] = [
     run: async (ctx) => {
       const files = rows<{ filename: string; size: number }>('files', 'workspace_id = ?', [ctx.workspaceId], 'created_at DESC', 20);
       return files.length ? files.map((file) => `- ${file.filename}（${file.size} 字节）`).join('\n') : '文件库为空。';
+    },
+  },
+  {
+    name: 'memory_save',
+    description: '保存一条值得长期记住的用户偏好、事实或项目背景。只在用户明确表达「记住」或确认了稳定偏好时调用，不要把随口一句话记下来。',
+    category: 'action',
+    parameters: {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: '要记住的内容，一句话，不超过 200 字' },
+        kind: { type: 'string', description: 'preference（偏好）/ fact（事实）/ project（项目背景）' },
+      },
+      required: ['content'],
+    },
+    run: async (ctx, args) => {
+      const created = memoriesService.save(ctx.workspaceId, ctx.userId, String(args.content ?? ''), String(args.kind ?? 'preference'), 'agent');
+      await memoriesService.embedPending(ctx.workspaceId, ctx.userId);
+      return created.deduplicated ? `已更新既有记忆：${created.content}` : `已记住：${created.content}`;
+    },
+  },
+  {
+    name: 'memory_search', description: '按相关性检索已保存的长期记忆',
+    category: 'action',
+    parameters: { type: 'object', properties: { query: { type: 'string', description: '检索词' } }, required: ['query'] },
+    run: async (ctx, args) => {
+      const hits = await memoriesService.recall(ctx.workspaceId, ctx.userId, String(args.query ?? ''), 5);
+      return hits.length ? hits.map((item) => `- ${item}`).join('\n') : '没有相关记忆。';
+    },
+  },
+  {
+    name: 'browser_read',
+    description: '用本机浏览器读取白名单内网页的正文（需先在设置中启用浏览器自动化并配置域名白名单）',
+    category: 'action',
+    parameters: { type: 'object', properties: { url: { type: 'string', description: '目标网页地址' } }, required: ['url'] },
+    run: async (ctx, args) => {
+      const result = await browserService.run(ctx.userId, ctx.workspaceId, { action: 'read', url: String(args.url ?? '') });
+      return result.text.slice(0, 4000);
     },
   },
 ];
